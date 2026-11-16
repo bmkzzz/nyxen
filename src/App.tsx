@@ -51,7 +51,7 @@ export default function App() {
     <main className="w-screen h-[100dvh] overflow-hidden bg-[#121212]">
       <iframe
         ref={iframeRef}
-        src="/Nyxen_EPUB_Reader.html?v=2.49.0"
+        src="/Nyxen_EPUB_Reader.html?v=2.62.0"
         title="Nyxen - EPUB Reader"
         allow="fullscreen"
         className="w-full h-full border-0 block"
