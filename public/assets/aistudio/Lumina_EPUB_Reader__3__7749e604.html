@@ -496,11 +496,12 @@ https://github.com/nodeca/pako/blob/main/LICENSE
       <header class="flex items-center justify-between gap-2 px-4 pt-3.5 pb-3" style="border-bottom: 1px solid var(--app-border);">
         <!-- Barra de búsqueda compacta integrada con botón + -->
         <div class="flex-1 min-w-0 h-9 rounded-full flex items-center pl-3.5 pr-1.5 gap-1.5 shadow-sm overflow-hidden" style="background-color: var(--app-surface); border: 1px solid var(--app-border);">
-          <svg class="w-4 h-4 opacity-55 flex-shrink-0 pointer-events-none" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-5.197-5.197m0 0A7.5 7.5 0 105.196 5.196a7.5 7.5 0 0010.607 10.607z"></path>
+          <svg class="w-4 h-4 opacity-70 flex-shrink-0 pointer-events-none" fill="none" stroke="currentColor" stroke-width="2.1" viewBox="0 0 24 24">
+            <circle cx="10.75" cy="10.75" r="7"></circle>
+            <path stroke-linecap="round" stroke-linejoin="round" d="M16 16l4.25 4.25"></path>
           </svg>
-          <input type="text" id="librarySearchInput" placeholder="Buscar en 1 libro..." class="w-full flex-1 min-w-0 bg-transparent text-xs focus:outline-none placeholder:opacity-50 truncate" style="color: var(--app-text);">
-          <button type="button" id="btnClearLibrarySearch" class="hidden w-4 h-4 rounded-full flex items-center justify-center text-[10px] opacity-50 hover:opacity-100 transition flex-shrink-0" style="color: var(--app-text);">✕</button>
+          <input type="text" id="librarySearchInput" enterkeyhint="search" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" placeholder="Buscar en 1 libro..." class="w-full flex-1 min-w-0 bg-transparent text-xs focus:outline-none placeholder:opacity-50 truncate" style="color: var(--app-text);">
+          <button type="button" id="btnClearLibrarySearch" class="hidden w-5 h-5 rounded-full flex items-center justify-center text-[10px] opacity-60 hover:opacity-100 active:scale-90 transition flex-shrink-0" style="color: var(--app-text);">✕</button>
           <div class="h-4 w-[1px] opacity-20 flex-shrink-0" style="background-color: var(--app-text);"></div>
           <!-- Botón Subir EPUB (+) integrado en la barra -->
           <button type="button" id="btnUploadTrigger" data-i18n-title="addEpubTitle" title="Añadir libro EPUB" class="w-7 h-7 rounded-full flex items-center justify-center cursor-pointer transition active:scale-95 opacity-75 hover:opacity-100 flex-shrink-0" style="color: var(--app-text);">
@@ -745,7 +746,7 @@ https://github.com/nodeca/pako/blob/main/LICENSE
           </span>
           <span class="font-medium truncate" data-i18n="aboutLabel">Acerca de Nyxen</span>
         </div>
-        <span class="text-[10px] font-mono opacity-45 flex-shrink-0">v2.6.22</span>
+        <span class="text-[10px] font-mono opacity-45 flex-shrink-0">v2.6.23</span>
       </button>
 
     </div>
@@ -1329,7 +1330,7 @@ https://github.com/nodeca/pako/blob/main/LICENSE
             </button>
 
             <button id="btnDrawerGlobalSearch" data-i18n-title="searchBookTitle" title="Buscar en todo el libro" class="p-2 rounded-full hover:bg-black/5 active:scale-95 transition opacity-80 hover:opacity-100">
-              <svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-5.197-5.197m0 0A7.5 7.5 0 105.196 5.196a7.5 7.5 0 0010.607 10.607z"></path></svg>
+              <svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="1.95" viewBox="0 0 24 24"><circle cx="10.75" cy="10.75" r="7"></circle><path stroke-linecap="round" stroke-linejoin="round" d="M16 16l4.25 4.25"></path></svg>
             </button>
           </div>
 
@@ -1441,7 +1442,7 @@ https://github.com/nodeca/pako/blob/main/LICENSE
               <svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="2.2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M15.75 19.5L8.25 12l7.5-7.5"></path></svg>
             </button>
             <div class="flex-1 flex items-center gap-2 px-3 py-2 rounded-2xl border" style="background-color: var(--reader-surface); border-color: var(--reader-border); color: var(--reader-text);">
-              <svg class="w-4 h-4 opacity-50 flex-shrink-0" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-5.197-5.197m0 0A7.5 7.5 0 105.196 5.196a7.5 7.5 0 0010.607 10.607z"></path></svg>
+              <svg class="w-4 h-4 opacity-65 flex-shrink-0" fill="none" stroke="currentColor" stroke-width="2.1" viewBox="0 0 24 24"><circle cx="10.75" cy="10.75" r="7"></circle><path stroke-linecap="round" stroke-linejoin="round" d="M16 16l4.25 4.25"></path></svg>
               <input type="text" id="drawerSearchInput" enterkeyhint="search" placeholder="Buscar en todo el libro..." class="flex-1 min-w-0 text-xs bg-transparent focus:outline-none" style="color: var(--reader-text);">
               <button id="btnClearSearchInput" class="text-xs opacity-55 hover:opacity-100 hidden px-1" style="color: var(--reader-text);">✕</button>
             </div>
@@ -4097,7 +4098,7 @@ https://github.com/nodeca/pako/blob/main/LICENSE
 
         const backupPayload = {
           app: "NyxenEPUBReader",
-          version: "2.6.22",
+          version: "2.6.23",
           exportedAt: new Date().toISOString(),
           booksMeta: allBooks.map(b => {
             const cols = getBookCollections(b);
@@ -4464,25 +4465,124 @@ https://github.com/nodeca/pako/blob/main/LICENSE
 
     let librarySearchDebounce = null;
     let libraryRenderToken = 0;
+    let lastEffectiveLibQuery = "";
+    let lastFilterBarSignature = "";
+    const librarySearchIndexCache = new Map();
+
+    function getBookSearchRecord(book) {
+      if (!book || !book.id) return null;
+      const tagsArr = Array.isArray(book.tags) ? book.tags : [];
+      const colsArr = getBookCollections(book);
+      const sig = `${book.title || ""}\u0000${book.author || ""}\u0000${tagsArr.join(",")}\u0000${colsArr.join(",")}`;
+      const cached = librarySearchIndexCache.get(book.id);
+      if (cached && cached.sig === sig) return cached;
+
+      const record = {
+        sig,
+        title: foldSearchQuery(book.title || ""),
+        author: foldSearchQuery(book.author || ""),
+        tags: tagsArr.map(tg => foldSearchQuery(tg)).filter(Boolean),
+        collections: colsArr.map(c => foldSearchQuery(c)).filter(Boolean)
+      };
+      librarySearchIndexCache.set(book.id, record);
+      return record;
+    }
+
+    function scoreBookSearchMatch(book, tokens, fullQuery) {
+      const rec = getBookSearchRecord(book);
+      if (!rec) return 0;
+
+      for (let i = 0; i < tokens.length; i++) {
+        const tok = tokens[i];
+        if (tok.startsWith("#")) {
+          const tagNeedle = tok.slice(1);
+          if (!tagNeedle) {
+            if (rec.tags.length === 0) return 0;
+            continue;
+          }
+          if (!rec.tags.some(tg => tg.includes(tagNeedle))) return 0;
+        } else {
+          const hit =
+            rec.title.includes(tok) ||
+            rec.author.includes(tok) ||
+            rec.tags.some(tg => tg.includes(tok)) ||
+            rec.collections.some(c => c.includes(tok));
+          if (!hit) return 0;
+        }
+      }
+
+      let score = 1;
+      const cleanFull = fullQuery.replace(/^#/, "");
+      if (cleanFull) {
+        if (rec.title === cleanFull) score += 120;
+        else if (rec.title.startsWith(cleanFull)) score += 80;
+        else if (rec.title.includes(cleanFull)) score += 45;
+        if (rec.author === cleanFull) score += 55;
+        else if (rec.author.startsWith(cleanFull)) score += 35;
+        else if (rec.author.includes(cleanFull)) score += 20;
+        if (rec.tags.some(tg => tg === cleanFull)) score += 30;
+      }
+
+      const paddedTitle = " " + rec.title;
+      const paddedAuthor = " " + rec.author;
+      for (let i = 0; i < tokens.length; i++) {
+        const tok = tokens[i].replace(/^#/, "");
+        if (!tok) continue;
+        if (paddedTitle.includes(" " + tok)) score += 16;
+        else if (rec.title.includes(tok)) score += 8;
+        if (paddedAuthor.includes(" " + tok)) score += 10;
+        else if (rec.author.includes(tok)) score += 5;
+        if (rec.tags.some(tg => tg.includes(tok))) score += 7;
+        if (rec.collections.some(c => c.includes(tok))) score += 4;
+      }
+      return score;
+    }
+
+    function clearLibrarySearch({ focus = false } = {}) {
+      clearTimeout(librarySearchDebounce);
+      librarySearchQuery = "";
+      lastEffectiveLibQuery = "";
+      const input = document.getElementById("librarySearchInput");
+      if (input) {
+        input.value = "";
+        if (focus) input.focus();
+      }
+      document.getElementById("btnClearLibrarySearch")?.classList.add("hidden");
+      renderLibrary({ skipDbFetch: true });
+    }
 
     safeOn("librarySearchInput", "input", (e) => {
       librarySearchQuery = e.target.value || "";
       const clearBtn = document.getElementById("btnClearLibrarySearch");
       if (clearBtn) clearBtn.classList.toggle("hidden", !librarySearchQuery.trim());
+      const nextEffective = foldSearchQuery(librarySearchQuery);
+      if (nextEffective === lastEffectiveLibQuery) return;
       clearTimeout(librarySearchDebounce);
       librarySearchDebounce = setTimeout(() => {
+        lastEffectiveLibQuery = nextEffective;
         renderLibrary({ skipDbFetch: true });
-      }, 90);
+      }, nextEffective === "" ? 0 : 60);
     });
 
-    safeOn("btnClearLibrarySearch", "click", () => {
-      clearTimeout(librarySearchDebounce);
-      librarySearchQuery = "";
-      const input = document.getElementById("librarySearchInput");
-      if (input) input.value = "";
-      document.getElementById("btnClearLibrarySearch")?.classList.add("hidden");
-      renderLibrary({ skipDbFetch: true });
+    safeOn("librarySearchInput", "keydown", (e) => {
+      if (e.key === "Escape") {
+        if (librarySearchQuery) {
+          e.preventDefault();
+          clearLibrarySearch({ focus: true });
+        }
+      } else if (e.key === "Enter") {
+        e.preventDefault();
+        clearTimeout(librarySearchDebounce);
+        const nextEffective = foldSearchQuery(librarySearchQuery);
+        if (nextEffective !== lastEffectiveLibQuery) {
+          lastEffectiveLibQuery = nextEffective;
+          renderLibrary({ skipDbFetch: true });
+        }
+        e.target.blur();
+      }
     });
+
+    safeOn("btnClearLibrarySearch", "click", () => clearLibrarySearch({ focus: true }));
 
     async function renderLibrary(options = {}) {
       const renderToken = ++libraryRenderToken;
@@ -4509,23 +4609,28 @@ https://github.com/nodeca/pako/blob/main/LICENSE
       emptyState.classList.add("hidden");
       grid.classList.remove("hidden");
 
-      const q = (librarySearchQuery || "").trim().toLowerCase();
+      const foldedQ = foldSearchQuery(librarySearchQuery || "");
+      lastEffectiveLibQuery = foldedQ;
+      const searchTokens = foldedQ ? foldedQ.split(" ").filter(Boolean) : [];
+      const hasSearch = searchTokens.length > 0;
       const selectedGroupKey = selectedLibraryGroup === "ALL" ? "" : selectedLibraryGroup.toLowerCase();
+
+      const relevanceScores = hasSearch ? new Map() : null;
+      let globalSearchMatchCount = 0;
+
       const displayList = booksList.filter(b => {
+        const score = hasSearch ? scoreBookSearchMatch(b, searchTokens, foldedQ) : 1;
+        if (score <= 0) return false;
+        if (hasSearch) {
+          globalSearchMatchCount++;
+          relevanceScores.set(b.id, score);
+        }
+        if (selectedLibraryGroup === "ALL") return true;
         const bookCols = getBookCollections(b);
-        const matchGroup = selectedLibraryGroup === "ALL" || bookCols.some(c => c.toLowerCase() === selectedGroupKey);
-        if (!matchGroup) return false;
-        if (!q) return true;
-        const t = (b.title || "").toLowerCase();
-        const a = (b.author || "").toLowerCase();
-        const colsMatch = bookCols.some(c => c.toLowerCase().includes(q));
-        const cleanQ = q.replace(/^#/, "");
-        const tagsMatch = cleanQ && Array.isArray(b.tags) && b.tags.some(tg => String(tg).toLowerCase().includes(cleanQ));
-        return t.includes(q) || a.includes(q) || colsMatch || tagsMatch;
+        return bookCols.some(c => c.toLowerCase() === selectedGroupKey);
       });
 
-      // Ordenar según la preferencia activa (Recientes, Agregado, Progreso, Título A-Z, Título Z-A)
-      displayList.sort((a, b) => {
+      const compareBySortPref = (a, b) => {
         if (libSortBy === "recent") {
           return (b.lastOpenedAt || b.addedAt || 0) - (a.lastOpenedAt || a.addedAt || 0);
         }
@@ -4542,6 +4647,15 @@ https://github.com/nodeca/pako/blob/main/LICENSE
           return (b.title || "").localeCompare(a.title || "", currentLang, { sensitivity: "base" });
         }
         return 0;
+      };
+
+      // Ordenar por relevancia cuando hay búsqueda activa, desempatando con la preferencia elegida
+      displayList.sort((a, b) => {
+        if (relevanceScores) {
+          const diff = (relevanceScores.get(b.id) || 0) - (relevanceScores.get(a.id) || 0);
+          if (diff !== 0) return diff;
+        }
+        return compareBySortPref(a, b);
       });
 
       if (libViewMode === "list") {
@@ -4551,10 +4665,51 @@ https://github.com/nodeca/pako/blob/main/LICENSE
       }
 
       if (displayList.length === 0) {
-        const emptyMsg = q
-          ? (currentLang === "es" ? "No se encontraron libros que coincidan con la búsqueda." : "No books match your search.")
+        const emptyWrap = document.createElement("div");
+        emptyWrap.className = "col-span-full flex flex-col items-center justify-center gap-2.5 py-10 px-4 text-center";
+        const emptyMsg = hasSearch
+          ? (selectedLibraryGroup !== "ALL"
+              ? (currentLang === "es" ? `Sin coincidencias en "${selectedLibraryGroup}".` : `No matches in "${selectedLibraryGroup}".`)
+              : (currentLang === "es" ? "No se encontraron libros que coincidan con la búsqueda." : "No books match your search."))
           : (currentLang === "es" ? "No hay libros en esta colección." : "No books in this collection.");
-        grid.innerHTML = `<p class="col-span-full text-center text-xs opacity-50 py-10">${emptyMsg}</p>`;
+
+        const msgEl = document.createElement("p");
+        msgEl.className = "text-xs opacity-55";
+        msgEl.textContent = emptyMsg;
+        emptyWrap.appendChild(msgEl);
+
+        if (hasSearch) {
+          const actionsRow = document.createElement("div");
+          actionsRow.className = "flex items-center justify-center gap-2 flex-wrap";
+
+          if (selectedLibraryGroup !== "ALL" && globalSearchMatchCount > 0) {
+            const searchAllBtn = document.createElement("button");
+            searchAllBtn.type = "button";
+            searchAllBtn.className = "px-3.5 py-1.5 rounded-full text-[11px] font-semibold text-white shadow-sm active:scale-95 transition";
+            searchAllBtn.style.backgroundColor = "var(--app-accent)";
+            searchAllBtn.textContent = currentLang === "es"
+              ? `Buscar en Todos (${globalSearchMatchCount})`
+              : `Search in All (${globalSearchMatchCount})`;
+            searchAllBtn.addEventListener("click", () => {
+              selectedLibraryGroup = "ALL";
+              renderLibrary({ skipDbFetch: true });
+            });
+            actionsRow.appendChild(searchAllBtn);
+          }
+
+          const clearBtn = document.createElement("button");
+          clearBtn.type = "button";
+          clearBtn.className = "px-3.5 py-1.5 rounded-full text-[11px] font-semibold border opacity-80 hover:opacity-100 active:scale-95 transition";
+          clearBtn.style.backgroundColor = "var(--app-surface)";
+          clearBtn.style.borderColor = "var(--app-border)";
+          clearBtn.textContent = currentLang === "es" ? "Limpiar búsqueda" : "Clear search";
+          clearBtn.addEventListener("click", () => clearLibrarySearch({ focus: true }));
+          actionsRow.appendChild(clearBtn);
+
+          emptyWrap.appendChild(actionsRow);
+        }
+
+        grid.appendChild(emptyWrap);
         return;
       }
 
@@ -4732,6 +4887,7 @@ https://github.com/nodeca/pako/blob/main/LICENSE
       if (groups.length === 0) {
         bar.classList.add("hidden");
         selectedLibraryGroup = "ALL";
+        lastFilterBarSignature = "";
         return;
       }
 
@@ -4739,6 +4895,12 @@ https://github.com/nodeca/pako/blob/main/LICENSE
         ? "ALL"
         : groups.find(g => g.toLowerCase() === selectedLibraryGroup.toLowerCase());
       selectedLibraryGroup = matchedGroup || "ALL";
+
+      const sig = `${currentLang}\u0000${selectedLibraryGroup}\u0000${groups.join("\u0001")}`;
+      if (sig === lastFilterBarSignature && !bar.classList.contains("hidden")) {
+        return;
+      }
+      lastFilterBarSignature = sig;
 
       bar.classList.remove("hidden");
       bar.innerHTML = "";
