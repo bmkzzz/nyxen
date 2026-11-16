@@ -11,15 +11,7 @@ export default defineConfig(() => {
       tailwindcss(),
       VitePWA({
         registerType: 'autoUpdate',
-        includeAssets: [
-          'favicon.ico',
-          'apple-touch-icon.png',
-          'icon.svg',
-          'pwa-192x192.png',
-          'pwa-512x512.png',
-          'pwa-maskable-512x512.png',
-          'Nyxen_EPUB_Reader.html',
-        ],
+        includeAssets: [],
         manifest: {
           id: '/',
           name: 'Nyxen - EPUB Reader',
@@ -56,9 +48,33 @@ export default defineConfig(() => {
           ],
         },
         workbox: {
-          globPatterns: ['**/*.{js,css,html,ico,png,svg,woff,woff2}'],
+          cleanupOutdatedCaches: true,
+          clientsClaim: true,
+          skipWaiting: true,
+          globPatterns: ['**/*.{js,css,html,ico,png,svg,woff,woff2,webmanifest}'],
+          globIgnores: ['assets/aistudio/**'],
+          ignoreURLParametersMatching: [/^v$/, /^utm_/, /^fbclid$/],
+          navigateFallback: '/index.html',
+          navigateFallbackDenylist: [/^\/Nyxen_EPUB_Reader\.html/],
           maximumFileSizeToCacheInBytes: 5 * 1024 * 1024,
           runtimeCaching: [
+            {
+              urlPattern: ({url}) => url.pathname === '/Nyxen_EPUB_Reader.html',
+              handler: 'NetworkFirst',
+              options: {
+                cacheName: 'nyxen-reader-html-cache',
+                matchOptions: {
+                  ignoreSearch: true,
+                },
+                expiration: {
+                  maxEntries: 2,
+                  maxAgeSeconds: 60 * 60 * 24 * 30,
+                },
+                cacheableResponse: {
+                  statuses: [0, 200],
+                },
+              },
+            },
             {
               urlPattern: /^https:\/\/fonts\.googleapis\.com\/.*/i,
               handler: 'CacheFirst',
@@ -88,12 +104,12 @@ export default defineConfig(() => {
               },
             },
             {
-              urlPattern: /^https:\/\/(cdn\.tailwindcss\.com|cdnjs\.cloudflare\.com)\/.*/i,
+              urlPattern: /^https:\/\/api\.dictionaryapi\.dev\/.*/i,
               handler: 'StaleWhileRevalidate',
               options: {
-                cacheName: 'cdn-assets-cache',
+                cacheName: 'dictionary-api-cache',
                 expiration: {
-                  maxEntries: 10,
+                  maxEntries: 150,
                   maxAgeSeconds: 60 * 60 * 24 * 30,
                 },
                 cacheableResponse: {

@@ -6363,13 +6363,19 @@ https://github.com/nodeca/pako/blob/main/LICENSE
 
     let localDeferredPwaPrompt = null;
     let parentPwaState = { isInstallable: false, isInstalled: false, isIOS: false };
+    const isLocalIOSDevice = () => /iphone|ipad|ipod/.test((navigator.userAgent || "").toLowerCase());
 
     function updateInstallPwaButtonVisibility() {
       const btn = document.getElementById("btnInstallPwaApp");
       if (!btn) return;
       const isStandalone = window.matchMedia("(display-mode: standalone)").matches || window.navigator.standalone === true;
-      const canInstall = !isStandalone && !parentPwaState.isInstalled && (!!localDeferredPwaPrompt || parentPwaState.isInstallable);
+      const iosAvailable = parentPwaState.isIOS || isLocalIOSDevice();
+      const canInstall = !isStandalone && !parentPwaState.isInstalled && (!!localDeferredPwaPrompt || parentPwaState.isInstallable || iosAvailable);
       btn.classList.toggle("hidden", !canInstall);
+    }
+
+    if (window.parent === window && "serviceWorker" in navigator && (location.protocol === "https:" || location.hostname === "localhost" || location.hostname === "127.0.0.1")) {
+      navigator.serviceWorker.register("/sw.js").catch(() => {});
     }
 
     window.addEventListener("beforeinstallprompt", (e) => {
@@ -6401,6 +6407,8 @@ https://github.com/nodeca/pako/blob/main/LICENSE
       try {
         window.parent.postMessage({ type: "NYXEN_REQUEST_PWA_STATE" }, window.location.origin);
       } catch (e) {}
+    } else {
+      updateInstallPwaButtonVisibility();
     }
 
     safeOn("btnInstallPwaApp", "click", async () => {
@@ -6417,7 +6425,11 @@ https://github.com/nodeca/pako/blob/main/LICENSE
       if (window.parent && window.parent !== window && window.location.origin && window.location.origin !== "null") {
         try {
           window.parent.postMessage({ type: "NYXEN_REQUEST_PWA_INSTALL" }, window.location.origin);
+          return;
         } catch (e) {}
+      }
+      if (isLocalIOSDevice()) {
+        showToast(currentLang === "es" ? "En Safari: Compartir -> Agregar a inicio" : "In Safari: Share -> Add to Home Screen");
       }
     });
 

@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { OfflineIndicator } from './components/OfflineIndicator';
 import { PWAInstallButton } from './components/PWAInstallButton';
 import { usePWAInstall } from './hooks/usePWAInstall';
@@ -6,6 +6,7 @@ import { usePWAInstall } from './hooks/usePWAInstall';
 export default function App() {
   const iframeRef = useRef<HTMLIFrameElement | null>(null);
   const { isInstallable, isInstalled, isIOS, install } = usePWAInstall();
+  const [showIOSGuide, setShowIOSGuide] = useState(false);
 
   useEffect(() => {
     const syncPwaState = () => {
@@ -34,7 +35,11 @@ export default function App() {
       if (data.type === 'NYXEN_REQUEST_PWA_STATE') {
         syncPwaState();
       } else if (data.type === 'NYXEN_REQUEST_PWA_INSTALL') {
-        await install();
+        if (isInstallable) {
+          await install();
+        } else if (isIOS) {
+          setShowIOSGuide(true);
+        }
       } else if (data.type === 'NYXEN_THEME_COLOR' && typeof data.color === 'string') {
         const meta = document.querySelector('meta[name="theme-color"]');
         if (meta) {
@@ -54,6 +59,21 @@ export default function App() {
         src="/Nyxen_EPUB_Reader.html?v=2.64.0"
         title="Nyxen - EPUB Reader"
         allow="fullscreen"
+        onLoad={() => {
+          try {
+            iframeRef.current?.contentWindow?.postMessage(
+              {
+                type: 'NYXEN_PWA_STATE',
+                isInstallable,
+                isInstalled,
+                isIOS,
+              },
+              window.location.origin
+            );
+          } catch {
+            // Ignore
+          }
+        }}
         className="w-full h-full border-0 block"
       />
       <PWAInstallButton
@@ -61,6 +81,8 @@ export default function App() {
         isInstalled={isInstalled}
         isIOS={isIOS}
         onInstall={install}
+        showIOSGuide={showIOSGuide}
+        onShowIOSGuideChange={setShowIOSGuide}
       />
       <OfflineIndicator />
     </main>
