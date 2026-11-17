@@ -6981,6 +6981,23 @@ https://github.com/nodeca/pako/blob/main/LICENSE
       coverObjectUrlCache.clear();
     }
 
+    const DEFAULT_BOOK_COVERS = [
+      "/covers/default-1.png",
+      "/covers/default-2.png",
+      "/covers/default-3.png",
+      "/covers/default-4.png"
+    ];
+
+    function getBookFallbackCover(book) {
+      const seed = String((book && (book.id || book.title)) || "nyxen");
+      let hash = 0;
+      for (let i = 0; i < seed.length; i++) {
+        hash = ((hash << 5) - hash + seed.charCodeAt(i)) | 0;
+      }
+      const idx = Math.abs(hash) % DEFAULT_BOOK_COVERS.length;
+      return DEFAULT_BOOK_COVERS[idx];
+    }
+
     function getBookCoverUrl(book) {
       if (!book || !book.cover) return "";
       const raw = book.cover;
@@ -7007,6 +7024,10 @@ https://github.com/nodeca/pako/blob/main/LICENSE
         }
       } catch (e) {}
       return raw;
+    }
+
+    function getBookDisplayCoverUrl(book) {
+      return getBookCoverUrl(book) || getBookFallbackCover(book);
     }
 
     function ensureLibraryGridDelegation(grid) {
@@ -7262,13 +7283,9 @@ https://github.com/nodeca/pako/blob/main/LICENSE
 
         const displayPct = computeBookProgressPct(book);
         const isCompleted = book.status === "Terminado" || displayPct >= 100;
-        const coverUrl = getBookCoverUrl(book);
+        const coverUrl = getBookDisplayCoverUrl(book);
 
-        const coverHtml = coverUrl
-          ? `<img src="${coverUrl}" class="w-full h-full object-cover" loading="lazy" decoding="async">`
-          : `<div class="w-full h-full flex flex-col justify-end p-2" style="background: var(--app-surface);">
-              <span class="text-[10px] font-bold line-clamp-3">${escapeHtml(book.title)}</span>
-             </div>`;
+        const coverHtml = `<img src="${coverUrl}" class="w-full h-full object-cover" loading="lazy" decoding="async">`;
 
         const libStatusDotColor = book.status === "Terminado"
           ? (isLightTheme ? "#059669" : "#34D399")
@@ -7432,11 +7449,7 @@ https://github.com/nodeca/pako/blob/main/LICENSE
           : "0 18px 40px rgba(0, 0, 0, 0.72), inset 0 1px 0 rgba(255, 255, 255, 0.06)";
       }
 
-      const fallbackSvg = `data:image/svg+xml;utf8,` + encodeURIComponent(
-        `<svg xmlns="http://www.w3.org/2000/svg" width="120" height="160" viewBox="0 0 120 160"><defs><linearGradient id="fb" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="#312e81"/><stop offset="100%" stop-color="#6d28d9"/></linearGradient></defs><rect width="120" height="160" fill="url(#fb)"/><text x="60" y="85" text-anchor="middle" fill="#e9d5ff" font-family="sans-serif" font-size="14" font-weight="bold">EPUB</text></svg>`
-      );
-
-      const coverSrc = book.cover || fallbackSvg;
+      const coverSrc = getBookDisplayCoverUrl(book);
       if (bannerBlur) {
         bannerBlur.src = coverSrc;
         bannerBlur.classList.remove("hidden");
@@ -8173,12 +8186,8 @@ https://github.com/nodeca/pako/blob/main/LICENSE
       }
 
       if (coverEl) {
-        if (currentBook.cover) {
-          coverEl.src = currentBook.cover;
-          coverEl.classList.remove("hidden");
-        } else {
-          coverEl.classList.add("hidden");
-        }
+        coverEl.src = getBookDisplayCoverUrl(currentBook);
+        coverEl.classList.remove("hidden");
       }
 
       if (descEl) descEl.textContent = currentBook.description || (currentLang === "es" ? "Sin descripción disponible." : "No description available.");
@@ -8296,7 +8305,7 @@ https://github.com/nodeca/pako/blob/main/LICENSE
       if (descInput) descInput.value = currentBook.description || "";
       if (tagsInput) tagsInput.value = (currentBook.tags || []).map(t => "#" + t).join(", ");
       tempCoverBase64 = currentBook.cover || null;
-      if (previewImg) previewImg.src = tempCoverBase64 || "";
+      if (previewImg) previewImg.src = tempCoverBase64 || getBookFallbackCover(currentBook);
       modal?.classList.remove("hidden");
     });
 
@@ -9873,7 +9882,7 @@ https://github.com/nodeca/pako/blob/main/LICENSE
       const title = document.getElementById("drawerBookTitle");
       const author = document.getElementById("drawerBookAuthor");
 
-      if (cover) cover.src = currentBook.cover || "";
+      if (cover) cover.src = getBookDisplayCoverUrl(currentBook);
       if (title) title.textContent = currentBook.title;
       if (author) author.textContent = currentBook.author;
 
@@ -13478,14 +13487,15 @@ https://github.com/nodeca/pako/blob/main/LICENSE
       syncQuoteCardControlsUI();
       document.getElementById("quoteCardModal")?.classList.remove("hidden");
 
-      if (!book.cover) {
+      const cardCoverSrc = getBookDisplayCoverUrl(book);
+      if (!cardCoverSrc) {
         activeQuoteCardState.coverSrc = "";
         activeQuoteCardState.coverImg = null;
-      } else if (activeQuoteCardState.coverSrc !== book.cover) {
-        activeQuoteCardState.coverSrc = book.cover;
+      } else if (activeQuoteCardState.coverSrc !== cardCoverSrc) {
+        activeQuoteCardState.coverSrc = cardCoverSrc;
         activeQuoteCardState.coverImg = null;
-        loadCardImage(book.cover).then(img => {
-          if (activeQuoteCardState.coverSrc === book.cover) {
+        loadCardImage(cardCoverSrc).then(img => {
+          if (activeQuoteCardState.coverSrc === cardCoverSrc) {
             activeQuoteCardState.coverImg = img;
             renderQuoteCardCanvas();
           }
