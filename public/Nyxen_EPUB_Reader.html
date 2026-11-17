@@ -2261,6 +2261,23 @@ https://github.com/nodeca/pako/blob/main/LICENSE
       opacity: 0.45;
     }
 
+    #detailReviewBox {
+      transition: border-color 160ms ease, box-shadow 160ms ease;
+    }
+    #detailReviewBox:focus-within {
+      border-color: color-mix(in srgb, var(--app-accent) 65%, var(--app-border)) !important;
+      box-shadow: 0 0 0 2px color-mix(in srgb, var(--app-accent) 14%, transparent);
+    }
+    #detailReviewTextarea {
+      user-select: text;
+      -webkit-user-select: text;
+      caret-color: var(--app-accent);
+    }
+    #detailReviewTextarea::placeholder {
+      color: var(--app-text);
+      opacity: 0.4;
+    }
+
     @layer base {
       * {
         -webkit-tap-highlight-color: transparent;
@@ -3045,63 +3062,35 @@ https://github.com/nodeca/pako/blob/main/LICENSE
           </div>
         </div>
 
-        <!-- Vista Reseña y Calificación -->
-        <div id="detailReviewContent" class="hidden pt-5 space-y-6">
-          <div>
-            <div class="flex items-center justify-between mb-3">
-              <span class="text-xs font-semibold opacity-65" data-i18n="ratingSectionLabel">Tu puntuación</span>
-              <button type="button" id="btnClearDetailRating" class="hidden text-[11px] font-medium opacity-55 hover:opacity-95 transition active:scale-95" style="color: var(--app-text);" data-i18n="clearRatingBtn">Quitar</button>
-            </div>
-
-            <div class="flex items-center justify-between gap-3">
-              <div id="detailRatingStarsWrap" class="flex items-center gap-1 touch-none select-none" role="slider" aria-label="Puntuación" aria-valuemin="0" aria-valuemax="5" aria-valuenow="0"></div>
-              <div class="text-right min-w-[84px]">
-                <div class="flex items-baseline justify-end gap-0.5 tabular-nums">
-                  <span id="detailRatingValue" class="text-lg font-bold tracking-tight" style="color: var(--app-text);">—</span>
-                  <span id="detailRatingDenominator" class="hidden text-[11px] font-medium opacity-45">/ 5</span>
+        <!-- Vista Reseña y Calificación (tarjeta única fluida) -->
+        <div id="detailReviewContent" class="hidden pt-4">
+          <div class="rounded-2xl p-4 border shadow-sm space-y-3" style="background-color: var(--app-surface); border-color: var(--app-border);">
+            <div class="flex items-center justify-between gap-2 flex-wrap">
+              <div id="detailRatingStarsWrap" class="flex items-center gap-0.5 touch-none select-none" role="slider" aria-label="Puntuación" aria-valuemin="0" aria-valuemax="5" aria-valuenow="0"></div>
+              <div class="flex items-center gap-2 ml-auto">
+                <div class="flex items-baseline gap-1.5 tabular-nums">
+                  <span id="detailRatingLabel" class="text-[11px] font-medium opacity-60" data-i18n="ratingEmptyLabel">Sin calificar</span>
+                  <span class="inline-flex items-baseline gap-0.5">
+                    <span id="detailRatingValue" class="text-sm font-bold tracking-tight" style="color: var(--app-text);">—</span>
+                    <span id="detailRatingDenominator" class="hidden text-[10px] font-medium opacity-45">/ 5</span>
+                  </span>
                 </div>
-                <div id="detailRatingLabel" class="text-[11px] font-medium opacity-60 truncate" data-i18n="ratingEmptyLabel">Sin calificar</div>
+                <button type="button" id="btnClearDetailRating" class="hidden w-6 h-6 rounded-full inline-flex items-center justify-center opacity-55 hover:opacity-100 transition active:scale-90" style="background-color: color-mix(in srgb, var(--app-text) 8%, transparent); color: var(--app-text);" aria-label="Quitar calificación">
+                  <svg class="w-3 h-3" fill="none" stroke="currentColor" stroke-width="2.2" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"></path>
+                  </svg>
+                </button>
               </div>
             </div>
 
-            <p id="detailRatingHint" class="mt-2.5 text-[11px] opacity-40" data-i18n="ratingTapHint">Toca o desliza sobre las estrellas para elegir medias notas.</p>
-          </div>
-
-          <div class="pt-5 border-t space-y-3" style="border-color: var(--app-border);">
-            <div class="flex items-center justify-between">
-              <div class="flex items-center gap-2">
-                <span class="text-xs font-semibold opacity-65" data-i18n="reviewSectionLabel">Notas de lectura</span>
-                <span id="detailReviewDate" class="hidden text-[11px] opacity-40 tabular-nums"></span>
-              </div>
-              <button type="button" id="btnEditDetailReview" class="hidden inline-flex items-center gap-1 text-[11px] font-semibold opacity-65 hover:opacity-100 transition active:scale-95" style="color: var(--app-accent);">
-                <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="1.95" viewBox="0 0 24 24">
-                  <path stroke-linecap="round" stroke-linejoin="round" d="M11.75 4.5H6.75A2.75 2.75 0 004 7.25v9.75a2.75 2.75 0 002.75 2.75h9.75a2.75 2.75 0 002.75-2.75v-4.75"></path>
-                  <g transform="translate(14.6 9.3) rotate(45)"><path stroke-linecap="round" stroke-linejoin="round" d="M-2.2 2.4V-4.4A2 2 0 01-.2-6.4h.4a2 2 0 012 2.0V2.4L0 6.1l-2.2-3.7z"></path><path stroke-linecap="round" stroke-linejoin="round" d="M-2.2-2.6h4.4"></path></g>
-                </svg>
-                <span data-i18n="editReviewBtn">Editar</span>
-              </button>
-            </div>
-
-            <button type="button" id="detailReviewEmptyBtn" class="w-full text-left rounded-2xl p-4 border border-dashed transition active:scale-[0.99] flex items-center gap-3 opacity-75 hover:opacity-100" style="background-color: color-mix(in srgb, var(--app-text) 2.5%, transparent); border-color: var(--app-border); color: var(--app-text);">
-              <svg class="w-4 h-4 flex-shrink-0 opacity-60" fill="none" stroke="currentColor" stroke-width="1.95" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" d="M11.75 4.5H6.75A2.75 2.75 0 004 7.25v9.75a2.75 2.75 0 002.75 2.75h9.75a2.75 2.75 0 002.75-2.75v-4.75"></path>
-                <g transform="translate(14.6 9.3) rotate(45)"><path stroke-linecap="round" stroke-linejoin="round" d="M-2.2 2.4V-4.4A2 2 0 01-.2-6.4h.4a2 2 0 012 2.0V2.4L0 6.1l-2.2-3.7z"></path><path stroke-linecap="round" stroke-linejoin="round" d="M-2.2-2.6h4.4"></path></g>
-              </svg>
-              <span class="text-xs leading-relaxed" data-i18n="reviewEmptyPrompt">Escribe qué te pareció la historia, personajes o final...</span>
-            </button>
-
-            <div id="detailReviewDisplayWrap" class="hidden rounded-2xl p-4 cursor-pointer transition" style="background-color: color-mix(in srgb, var(--app-text) 3.5%, transparent);">
-              <p id="detailReviewDisplayText" class="text-[13px] leading-relaxed whitespace-pre-line text-justify border-l-2 pl-3.5 opacity-90" style="border-color: var(--app-accent); color: var(--app-text);"></p>
-            </div>
-
-            <div id="detailReviewEditorWrap" class="hidden space-y-2.5">
-              <textarea id="detailReviewTextarea" maxlength="2000" rows="4" class="w-full rounded-2xl p-3.5 text-[13px] leading-relaxed outline-none border resize-none transition" style="background-color: var(--app-surface); border-color: var(--app-border); color: var(--app-text);" data-i18n-placeholder="reviewPlaceholder" placeholder="Escribe qué te pareció la historia, personajes, ritmo o final..."></textarea>
-              <div class="flex items-center justify-between gap-2">
-                <span id="detailReviewCharCount" class="text-[11px] opacity-45 tabular-nums">0 / 2000</span>
-                <div class="flex items-center gap-2">
-                  <button type="button" id="btnCancelDetailReview" class="px-3 py-1.5 rounded-full text-xs font-semibold opacity-70 hover:opacity-100 transition active:scale-95" style="color: var(--app-text);" data-i18n="cancel">Cancelar</button>
-                  <button type="button" id="btnSaveDetailReview" class="px-4 py-1.5 rounded-full text-xs font-bold text-white shadow-sm active:scale-95 transition" style="background-color: var(--app-accent);" data-i18n="saveReviewBtn">Guardar</button>
+            <div id="detailReviewBox" class="rounded-xl border" style="background-color: var(--app-bg); border-color: var(--app-border);">
+              <textarea id="detailReviewTextarea" maxlength="2000" rows="4" class="w-full bg-transparent p-3.5 text-[13px] leading-relaxed outline-none resize-none" style="color: var(--app-text); min-height: 112px; max-height: 240px;" data-i18n-placeholder="reviewPlaceholder" placeholder="Escribe qué te pareció la historia, personajes, ritmo o final..."></textarea>
+              <div class="flex items-center justify-between gap-2 px-3.5 pb-2.5 pt-0.5 text-[10px] opacity-45 tabular-nums select-none">
+                <div class="flex items-center gap-1.5 min-w-0">
+                  <span id="detailReviewDate" class="hidden truncate"></span>
+                  <span id="detailReviewSaveStatus" class="hidden"></span>
                 </div>
+                <span id="detailReviewCharCount">0 / 2000</span>
               </div>
             </div>
           </div>
@@ -6157,6 +6146,9 @@ https://github.com/nodeca/pako/blob/main/LICENSE
       if (viewName !== "reader" && !document.getElementById("viewReader")?.classList.contains("hidden")) {
         flushPendingReaderProgress();
       }
+      if (viewName !== "detail" && !document.getElementById("viewStoryDetail")?.classList.contains("hidden") && typeof flushPendingDetailReview === "function") {
+        flushPendingDetailReview();
+      }
       document.getElementById("existingHighlightPopup")?.classList.add("hidden");
       document.getElementById("directHighlightToolbar")?.classList.add("hidden");
       document.getElementById("footnotePopup")?.classList.add("hidden");
@@ -7872,7 +7864,71 @@ https://github.com/nodeca/pako/blob/main/LICENSE
        10. DETALLE DE HISTORIA
     ------------------------------------------------------------- */
     let activeDetailTab = "summary";
-    let isEditingDetailReview = false;
+    let detailReviewSaveTimer = null;
+    let detailReviewStatusTimer = null;
+
+    function autoResizeDetailReviewTextarea(textarea) {
+      if (!textarea) return;
+      textarea.style.height = "auto";
+      const nextHeight = Math.min(240, Math.max(112, textarea.scrollHeight));
+      textarea.style.height = `${nextHeight}px`;
+    }
+
+    async function persistDetailReview({ showSavedBadge = false } = {}) {
+      if (detailReviewSaveTimer) {
+        clearTimeout(detailReviewSaveTimer);
+        detailReviewSaveTimer = null;
+      }
+      if (!currentBook) return;
+      const textarea = document.getElementById("detailReviewTextarea");
+      if (!textarea) return;
+      const nextText = textarea.value.trim();
+      const prevText = typeof currentBook.review === "string" ? currentBook.review.trim() : "";
+      if (nextText === prevText) return;
+
+      currentBook.review = nextText;
+      currentBook.reviewedAt = nextText ? Date.now() : 0;
+      await saveBookMeta(currentBook);
+      updateDetailReviewDateUI();
+
+      if (showSavedBadge) {
+        const statusEl = document.getElementById("detailReviewSaveStatus");
+        if (statusEl) {
+          statusEl.textContent = currentLang === "es" ? "· Guardado" : "· Saved";
+          statusEl.classList.remove("hidden");
+          if (detailReviewStatusTimer) clearTimeout(detailReviewStatusTimer);
+          detailReviewStatusTimer = setTimeout(() => {
+            statusEl.classList.add("hidden");
+          }, 1800);
+        }
+      }
+    }
+
+    function flushPendingDetailReview() {
+      if (detailReviewSaveTimer) {
+        persistDetailReview({ showSavedBadge: false });
+      }
+    }
+
+    function updateDetailReviewDateUI() {
+      const dateEl = document.getElementById("detailReviewDate");
+      if (!dateEl || !currentBook) return;
+      const reviewText = typeof currentBook.review === "string" ? currentBook.review.trim() : "";
+      if (reviewText && currentBook.reviewedAt) {
+        try {
+          const fmt = new Intl.DateTimeFormat(currentLang === "es" ? "es-ES" : "en-US", {
+            day: "numeric", month: "short", year: "numeric"
+          }).format(new Date(currentBook.reviewedAt));
+          dateEl.textContent = fmt;
+          dateEl.classList.remove("hidden");
+        } catch (e) {
+          dateEl.classList.add("hidden");
+        }
+      } else {
+        dateEl.textContent = "";
+        dateEl.classList.add("hidden");
+      }
+    }
 
     function getDetailRatingDescriptor(rating, lang = currentLang) {
       if (!rating || rating <= 0) return lang === "es" ? "Sin calificar" : "Unrated";
@@ -7919,6 +7975,11 @@ https://github.com/nodeca/pako/blob/main/LICENSE
         }
         if (panel) panel.classList.toggle("hidden", !isActive);
       });
+      if (activeDetailTab === "review") {
+        requestAnimationFrame(() => {
+          autoResizeDetailReviewTextarea(document.getElementById("detailReviewTextarea"));
+        });
+      }
     }
 
     function syncDetailRatingAndReviewUI() {
@@ -7927,7 +7988,6 @@ https://github.com/nodeca/pako/blob/main/LICENSE
         ? Math.min(5, Math.max(0.5, Math.round(currentBook.rating * 2) / 2))
         : 0;
       const formatRatingDisplay = (val) => (val % 1 === 0 ? String(Math.round(val)) : val.toFixed(1));
-      const reviewText = typeof currentBook.review === "string" ? currentBook.review.trim() : "";
 
       const starPath = "M11.48 3.499a.562.562 0 011.04 0l2.125 5.111a.563.563 0 00.475.345l5.518.442c.499.04.701.663.321.988l-4.204 3.602a.563.563 0 00-.182.557l1.285 5.385a.562.562 0 01-.84.61l-4.725-2.885a.563.563 0 00-.586 0L6.982 20.54a.562.562 0 01-.84-.61l1.285-5.386a.562.562 0 00-.182-.557l-4.204-3.602a.563.563 0 01.321-.988l5.518-.442a.563.563 0 00.475-.345L11.48 3.5z";
 
@@ -7952,8 +8012,8 @@ https://github.com/nodeca/pako/blob/main/LICENSE
           const fillAmt = rating >= i ? 1 : (rating >= i - 0.5 ? 0.5 : 0);
           const strokeColor = fillAmt > 0 ? "#F5B041" : "color-mix(in srgb, var(--app-text) 28%, transparent)";
           const clipId = `detailStarHalf_${i}`;
-          html += `<span class="relative inline-flex items-center justify-center w-8 h-8 cursor-pointer transition-transform active:scale-90" data-star-index="${i}">`;
-          html += `<svg class="w-6 h-6 pointer-events-none" viewBox="0 0 24 24" fill="none">`;
+          html += `<span class="relative inline-flex items-center justify-center w-7 h-7 cursor-pointer transition-transform active:scale-90" data-star-index="${i}">`;
+          html += `<svg class="w-5 h-5 pointer-events-none" viewBox="0 0 24 24" fill="none">`;
           if (fillAmt === 0.5) {
             html += `<defs><clipPath id="${clipId}"><rect x="0" y="0" width="12" height="24"></rect></clipPath></defs>`;
             html += `<path d="${starPath}" stroke="color-mix(in srgb, var(--app-text) 28%, transparent)" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" fill="none"></path>`;
@@ -7972,63 +8032,31 @@ https://github.com/nodeca/pako/blob/main/LICENSE
       const denomEl = document.getElementById("detailRatingDenominator");
       const lblEl = document.getElementById("detailRatingLabel");
       const clearBtn = document.getElementById("btnClearDetailRating");
-      const hintEl = document.getElementById("detailRatingHint");
 
       if (valEl) valEl.textContent = rating > 0 ? formatRatingDisplay(rating) : "—";
       if (denomEl) denomEl.classList.toggle("hidden", rating <= 0);
       if (lblEl) lblEl.textContent = getDetailRatingDescriptor(rating, currentLang);
-      if (clearBtn) clearBtn.classList.toggle("hidden", rating <= 0);
-      if (hintEl) hintEl.classList.toggle("hidden", rating > 0);
+      if (clearBtn) {
+        clearBtn.classList.toggle("hidden", rating <= 0);
+        const clearLabel = currentLang === "es" ? "Quitar calificación" : "Clear rating";
+        clearBtn.setAttribute("aria-label", clearLabel);
+        clearBtn.title = clearLabel;
+      }
 
-      // Reseña editorial (modo vista vs modo edición)
-      const dateEl = document.getElementById("detailReviewDate");
-      const editBtn = document.getElementById("btnEditDetailReview");
-      const emptyBtn = document.getElementById("detailReviewEmptyBtn");
-      const displayWrap = document.getElementById("detailReviewDisplayWrap");
-      const displayText = document.getElementById("detailReviewDisplayText");
-      const editorWrap = document.getElementById("detailReviewEditorWrap");
+      // Reseña fluida en caja única
       const textarea = document.getElementById("detailReviewTextarea");
       const charCount = document.getElementById("detailReviewCharCount");
+      const statusEl = document.getElementById("detailReviewSaveStatus");
+      if (statusEl) statusEl.classList.add("hidden");
 
-      if (dateEl) {
-        if (reviewText && currentBook.reviewedAt) {
-          try {
-            const fmt = new Intl.DateTimeFormat(currentLang === "es" ? "es-ES" : "en-US", {
-              day: "numeric", month: "short", year: "numeric"
-            }).format(new Date(currentBook.reviewedAt));
-            dateEl.textContent = `· ${fmt}`;
-            dateEl.classList.remove("hidden");
-          } catch (e) {
-            dateEl.classList.add("hidden");
-          }
-        } else {
-          dateEl.classList.add("hidden");
-        }
+      if (textarea && document.activeElement !== textarea) {
+        textarea.value = currentBook.review || "";
+        autoResizeDetailReviewTextarea(textarea);
       }
-
-      if (isEditingDetailReview) {
-        emptyBtn?.classList.add("hidden");
-        displayWrap?.classList.add("hidden");
-        editBtn?.classList.add("hidden");
-        editorWrap?.classList.remove("hidden");
-        if (textarea && document.activeElement !== textarea) {
-          textarea.value = currentBook.review || "";
-        }
-        if (charCount && textarea) {
-          charCount.textContent = `${textarea.value.length} / 2000`;
-        }
-      } else if (reviewText) {
-        emptyBtn?.classList.add("hidden");
-        editorWrap?.classList.add("hidden");
-        displayWrap?.classList.remove("hidden");
-        editBtn?.classList.remove("hidden");
-        if (displayText) displayText.textContent = reviewText;
-      } else {
-        displayWrap?.classList.add("hidden");
-        editorWrap?.classList.add("hidden");
-        editBtn?.classList.add("hidden");
-        emptyBtn?.classList.remove("hidden");
+      if (charCount && textarea) {
+        charCount.textContent = `${textarea.value.length} / 2000`;
       }
+      updateDetailReviewDateUI();
     }
 
     function wireDetailReviewEventsOnce() {
@@ -8090,55 +8118,32 @@ https://github.com/nodeca/pako/blob/main/LICENSE
         setDetailActiveTab("review");
       });
 
-      const openReviewEditor = () => {
-        if (!currentBook) return;
-        isEditingDetailReview = true;
-        const textarea = document.getElementById("detailReviewTextarea");
-        if (textarea) textarea.value = currentBook.review || "";
-        syncDetailRatingAndReviewUI();
-        requestAnimationFrame(() => {
-          if (textarea) {
-            textarea.focus();
-            const len = textarea.value.length;
-            try { textarea.setSelectionRange(len, len); } catch (err) {}
-          }
+      const textarea = document.getElementById("detailReviewTextarea");
+      if (textarea && !textarea.dataset.wired) {
+        textarea.dataset.wired = "1";
+        textarea.addEventListener("input", () => {
+          autoResizeDetailReviewTextarea(textarea);
+          const charCount = document.getElementById("detailReviewCharCount");
+          if (charCount) charCount.textContent = `${textarea.value.length} / 2000`;
+          if (detailReviewSaveTimer) clearTimeout(detailReviewSaveTimer);
+          detailReviewSaveTimer = setTimeout(() => {
+            persistDetailReview({ showSavedBadge: true });
+          }, 450);
         });
-      };
-
-      safeOn("detailReviewEmptyBtn", "click", openReviewEditor);
-      safeOn("btnEditDetailReview", "click", openReviewEditor);
-      safeOn("detailReviewDisplayWrap", "click", openReviewEditor);
-
-      safeOn("detailReviewTextarea", "input", (e) => {
-        const charCount = document.getElementById("detailReviewCharCount");
-        if (charCount) charCount.textContent = `${e.target.value.length} / 2000`;
-      });
-
-      safeOn("btnCancelDetailReview", "click", () => {
-        isEditingDetailReview = false;
-        syncDetailRatingAndReviewUI();
-      });
-
-      safeOn("btnSaveDetailReview", "click", async () => {
-        if (!currentBook) return;
-        const textarea = document.getElementById("detailReviewTextarea");
-        const nextText = textarea ? textarea.value.trim() : "";
-        currentBook.review = nextText;
-        currentBook.reviewedAt = nextText ? Date.now() : 0;
-        isEditingDetailReview = false;
-        syncDetailRatingAndReviewUI();
-        await saveBookMeta(currentBook);
-        showToast(currentLang === "es"
-          ? (nextText ? "Reseña guardada" : "Reseña eliminada")
-          : (nextText ? "Review saved" : "Review removed"));
-      });
+        textarea.addEventListener("blur", () => {
+          persistDetailReview({ showSavedBadge: true });
+        });
+      }
     }
 
     function renderStoryDetail(options = {}) {
       if (!currentBook) return;
       wireDetailReviewEventsOnce();
       if (options.resetTab) {
-        isEditingDetailReview = false;
+        if (detailReviewSaveTimer) {
+          clearTimeout(detailReviewSaveTimer);
+          detailReviewSaveTimer = null;
+        }
         setDetailActiveTab("summary");
       }
 
