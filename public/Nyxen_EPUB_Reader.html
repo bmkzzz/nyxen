@@ -2244,6 +2244,7 @@ https://github.com/nodeca/pako/blob/main/LICENSE
       --app-border: rgba(255, 255, 255, 0.08);
 
       --reader-font: 'Literata', serif;
+      --reader-font-weight: 400;
       --reader-bg: #121212;
       --reader-surface: #1e1e21;
       --reader-border: rgba(255, 255, 255, 0.12);
@@ -2354,6 +2355,7 @@ https://github.com/nodeca/pako/blob/main/LICENSE
     /* Tipografía y estilos de lectura */
     #readerContent {
       font-family: var(--reader-font);
+      font-weight: var(--reader-font-weight, 400);
     }
 
     #readerContent.override-author-styles,
@@ -2363,12 +2365,13 @@ https://github.com/nodeca/pako/blob/main/LICENSE
 
     #readerContent.override-author-styles p,
     #readerContent.override-author-styles div:not(.reader-chapter-title),
-    #readerContent.override-author-styles span:not(.hl-rounded):not(.hl-underline):not(.footnote-marker):not(.hl-note-indicator),
+    #readerContent.override-author-styles span:not(.hl-rounded):not(.hl-underline):not(.footnote-marker):not(.hl-note-indicator):not(.bold),
     #readerContent.override-author-styles li,
     #readerContent.override-author-styles blockquote,
     #readerContent.override-author-styles font {
       font-size: inherit !important;
       line-height: inherit !important;
+      font-weight: inherit !important;
       color: inherit !important;
       background-color: transparent !important;
     }
@@ -3776,8 +3779,9 @@ https://github.com/nodeca/pako/blob/main/LICENSE
             </div>
           </div>
 
-          <!-- 3. Tamaño del texto -->
-          <div class="px-4 py-1.5">
+          <!-- 3. Tamaño del texto y peso de la fuente -->
+          <div class="px-4 py-1.5 space-y-1">
+            <!-- Tamaño del texto -->
             <div class="flex items-center justify-between py-0.5">
               <div class="min-w-0 pr-2">
                 <div class="text-xs font-medium leading-tight" data-i18n="fontSize">Tamaño del texto</div>
@@ -3788,6 +3792,22 @@ https://github.com/nodeca/pako/blob/main/LICENSE
                   <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M5 12h14"></path></svg>
                 </button>
                 <button type="button" id="btnFontInc" class="ctx-action-row w-9 h-8 rounded-lg flex items-center justify-center opacity-70 hover:opacity-100 active:scale-90 transition">
+                  <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M12 5v14M5 12h14"></path></svg>
+                </button>
+              </div>
+            </div>
+
+            <!-- Peso de la fuente -->
+            <div class="flex items-center justify-between py-0.5">
+              <div class="min-w-0 pr-2">
+                <div class="text-xs font-medium leading-tight" data-i18n="fontWeight">Peso de la fuente</div>
+                <div id="fontWeightDisplay" class="text-[11px] opacity-55 mt-0.5 tabular-nums">Normal · 400</div>
+              </div>
+              <div class="flex items-center gap-1 flex-shrink-0">
+                <button type="button" id="btnFontWeightDec" class="ctx-action-row w-9 h-8 rounded-lg flex items-center justify-center opacity-70 hover:opacity-100 active:scale-90 transition">
+                  <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M5 12h14"></path></svg>
+                </button>
+                <button type="button" id="btnFontWeightInc" class="ctx-action-row w-9 h-8 rounded-lg flex items-center justify-center opacity-70 hover:opacity-100 active:scale-90 transition">
                   <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M12 5v14M5 12h14"></path></svg>
                 </button>
               </div>
@@ -3825,7 +3845,7 @@ https://github.com/nodeca/pako/blob/main/LICENSE
             <button type="button" id="btnCloseAaPanelAdv" class="ctx-action-row w-6 h-6 rounded-full flex items-center justify-center opacity-55 hover:opacity-100 transition text-xs flex-shrink-0" aria-label="Cerrar">✕</button>
           </div>
 
-          <!-- Controles de formato -->
+          <!-- Grupo 1: Alineación y espaciado -->
           <div class="px-4 py-2 space-y-1">
             <!-- Alineación del texto -->
             <div class="flex items-center justify-between py-1">
@@ -3847,23 +3867,7 @@ https://github.com/nodeca/pako/blob/main/LICENSE
               </div>
             </div>
 
-            <!-- Márgenes -->
-            <div class="flex items-center justify-between py-1">
-              <div class="min-w-0 pr-2">
-                <div class="text-xs font-medium leading-tight" data-i18n="margins">Márgenes</div>
-                <div id="marginDisplay" class="text-[11px] opacity-55 mt-0.5 tabular-nums">24px</div>
-              </div>
-              <div class="flex items-center gap-1 flex-shrink-0">
-                <button type="button" id="btnMarginDec" class="ctx-action-row w-9 h-8 rounded-lg flex items-center justify-center opacity-70 hover:opacity-100 active:scale-90 transition">
-                  <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M5 12h14"></path></svg>
-                </button>
-                <button type="button" id="btnMarginInc" class="ctx-action-row w-9 h-8 rounded-lg flex items-center justify-center opacity-70 hover:opacity-100 active:scale-90 transition">
-                  <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M12 5v14M5 12h14"></path></svg>
-                </button>
-              </div>
-            </div>
-
-            <!-- Interlineado -->
+            <!-- Interlineado (Line-height) -->
             <div class="flex items-center justify-between py-1">
               <div class="min-w-0 pr-2">
                 <div class="text-xs font-medium leading-tight" data-i18n="lineSpacing">Interlineado</div>
@@ -3898,7 +3902,7 @@ https://github.com/nodeca/pako/blob/main/LICENSE
             <!-- Espaciado entre Párrafos -->
             <div class="flex items-center justify-between py-1">
               <div class="min-w-0 pr-2">
-                <div class="text-xs font-medium leading-tight" data-i18n="paraSpacing">Espaciado</div>
+                <div class="text-xs font-medium leading-tight" data-i18n="paraSpacing">Espaciado entre párrafos</div>
                 <div id="paraSpacingDisplay" class="text-[11px] opacity-55 mt-0.5 tabular-nums">18px</div>
               </div>
               <div class="flex items-center gap-1 flex-shrink-0">
@@ -3910,6 +3914,17 @@ https://github.com/nodeca/pako/blob/main/LICENSE
                 </button>
               </div>
             </div>
+          </div>
+
+          <!-- Grupo 2: Acceso a Márgenes > -->
+          <div class="px-2.5 py-1 border-t" style="border-color: var(--app-border);">
+            <button type="button" id="btnOpenAaMarginsView" class="settings-menu-row w-full flex items-center justify-between gap-2 px-2 py-2 rounded-xl text-left">
+              <span class="text-xs font-medium truncate" data-i18n="marginsMenuLabel">Márgenes</span>
+              <span class="flex items-center gap-1.5 flex-shrink-0">
+                <span id="marginsSummaryDisplay" class="text-[11px] opacity-55 tabular-nums">24 · 24px</span>
+                <svg class="w-3.5 h-3.5 opacity-45" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M8.25 4.5l7.5 7.5-7.5 7.5"></path></svg>
+              </span>
+            </button>
           </div>
 
           <!-- Preferencias del lector (Switches consistentes con ≡) -->
@@ -3931,6 +3946,91 @@ https://github.com/nodeca/pako/blob/main/LICENSE
                 <span class="absolute left-0.5 w-3.5 h-3.5 rounded-full bg-white border border-black/15 shadow-md transition-transform peer-checked:translate-x-3.5"></span>
               </span>
             </label>
+          </div>
+        </div>
+
+        <!-- SUBVISTA: MÁRGENES POR LADO -->
+        <div id="aaPanelMarginsView" class="hidden">
+          <!-- Cabecera ← Volver a Formato y preferencias -->
+          <div class="px-2.5 py-2 border-b flex items-center gap-1.5" style="border-color: var(--app-border);">
+            <button type="button" id="btnBackAaAdvancedView" class="ctx-action-row p-1.5 rounded-lg active:scale-90 transition opacity-75 hover:opacity-100">
+              <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2.2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M15.75 19.5L8.25 12l7.5-7.5"></path></svg>
+            </button>
+            <span class="text-xs font-semibold truncate flex-1" data-i18n="marginsMenuLabel">Márgenes</span>
+            <button type="button" id="btnCloseAaPanelMargins" class="ctx-action-row w-6 h-6 rounded-full flex items-center justify-center opacity-55 hover:opacity-100 transition text-xs flex-shrink-0" aria-label="Cerrar">✕</button>
+          </div>
+
+          <!-- Márgenes horizontales -->
+          <div class="px-4 py-2 space-y-1">
+            <div class="flex items-center justify-between py-1">
+              <div class="min-w-0 pr-2">
+                <div class="text-xs font-medium leading-tight" data-i18n="marginLeftLabel">Margen izquierdo</div>
+                <div id="marginLeftDisplay" class="text-[11px] opacity-55 mt-0.5 tabular-nums">24px</div>
+              </div>
+              <div class="flex items-center gap-1 flex-shrink-0">
+                <button type="button" id="btnMarginLeftDec" class="ctx-action-row w-9 h-8 rounded-lg flex items-center justify-center opacity-70 hover:opacity-100 active:scale-90 transition">
+                  <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M5 12h14"></path></svg>
+                </button>
+                <button type="button" id="btnMarginLeftInc" class="ctx-action-row w-9 h-8 rounded-lg flex items-center justify-center opacity-70 hover:opacity-100 active:scale-90 transition">
+                  <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M12 5v14M5 12h14"></path></svg>
+                </button>
+              </div>
+            </div>
+
+            <div class="flex items-center justify-between py-1">
+              <div class="min-w-0 pr-2">
+                <div class="text-xs font-medium leading-tight" data-i18n="marginRightLabel">Margen derecho</div>
+                <div id="marginRightDisplay" class="text-[11px] opacity-55 mt-0.5 tabular-nums">24px</div>
+              </div>
+              <div class="flex items-center gap-1 flex-shrink-0">
+                <button type="button" id="btnMarginRightDec" class="ctx-action-row w-9 h-8 rounded-lg flex items-center justify-center opacity-70 hover:opacity-100 active:scale-90 transition">
+                  <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M5 12h14"></path></svg>
+                </button>
+                <button type="button" id="btnMarginRightInc" class="ctx-action-row w-9 h-8 rounded-lg flex items-center justify-center opacity-70 hover:opacity-100 active:scale-90 transition">
+                  <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M12 5v14M5 12h14"></path></svg>
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <!-- Márgenes verticales -->
+          <div class="px-4 py-2 border-t space-y-1" style="border-color: var(--app-border);">
+            <div class="flex items-center justify-between py-1">
+              <div class="min-w-0 pr-2">
+                <div class="text-xs font-medium leading-tight" data-i18n="marginTopLabel">Margen superior</div>
+                <div id="marginTopDisplay" class="text-[11px] opacity-55 mt-0.5 tabular-nums">64px</div>
+              </div>
+              <div class="flex items-center gap-1 flex-shrink-0">
+                <button type="button" id="btnMarginTopDec" class="ctx-action-row w-9 h-8 rounded-lg flex items-center justify-center opacity-70 hover:opacity-100 active:scale-90 transition">
+                  <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M5 12h14"></path></svg>
+                </button>
+                <button type="button" id="btnMarginTopInc" class="ctx-action-row w-9 h-8 rounded-lg flex items-center justify-center opacity-70 hover:opacity-100 active:scale-90 transition">
+                  <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M12 5v14M5 12h14"></path></svg>
+                </button>
+              </div>
+            </div>
+
+            <div class="flex items-center justify-between py-1">
+              <div class="min-w-0 pr-2">
+                <div class="text-xs font-medium leading-tight" data-i18n="marginBottomLabel">Margen inferior</div>
+                <div id="marginBottomDisplay" class="text-[11px] opacity-55 mt-0.5 tabular-nums">80px</div>
+              </div>
+              <div class="flex items-center gap-1 flex-shrink-0">
+                <button type="button" id="btnMarginBottomDec" class="ctx-action-row w-9 h-8 rounded-lg flex items-center justify-center opacity-70 hover:opacity-100 active:scale-90 transition">
+                  <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M5 12h14"></path></svg>
+                </button>
+                <button type="button" id="btnMarginBottomInc" class="ctx-action-row w-9 h-8 rounded-lg flex items-center justify-center opacity-70 hover:opacity-100 active:scale-90 transition">
+                  <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M12 5v14M5 12h14"></path></svg>
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <!-- Restablecer márgenes -->
+          <div class="px-2.5 py-1.5 border-t" style="border-color: var(--app-border);">
+            <button type="button" id="btnResetMargins" class="settings-menu-row w-full py-2 px-2 rounded-xl text-xs font-medium text-center opacity-70 hover:opacity-100 transition" data-i18n="resetMargins">
+              Restablecer
+            </button>
           </div>
         </div>
       </div>
@@ -4303,14 +4403,21 @@ https://github.com/nodeca/pako/blob/main/LICENSE
         overrideAuthorStyle: "Sobrescribir estilo del libro",
         overrideAuthorStyleDesc: "Forzar tu letra, tamaño, sangría y colores sobre el diseño del autor",
         fontSize: "Tamaño del texto",
+        fontWeight: "Peso de la fuente",
         textAlignLabel: "Alineación del texto",
         alignLeft: "Izquierda",
         alignJustify: "Justificado",
         themeLabel: "Tema",
         paragraphIndent: "Sangría de Párrafo",
         lineSpacing: "Interlineado",
-        margins: "Márgenes",
-        paraSpacing: "Espaciado",
+        margins: "Márgenes laterales",
+        marginsMenuLabel: "Márgenes",
+        marginLeftLabel: "Margen izquierdo",
+        marginRightLabel: "Margen derecho",
+        marginTopLabel: "Margen superior",
+        marginBottomLabel: "Margen inferior",
+        resetMargins: "Restablecer",
+        paraSpacing: "Espaciado entre párrafos",
         readingThemes: "Temas de Lectura",
         createTheme: "+ Crear Tema",
         toPalette: "+ A la paleta",
@@ -4500,14 +4607,21 @@ https://github.com/nodeca/pako/blob/main/LICENSE
         overrideAuthorStyle: "Override book style",
         overrideAuthorStyleDesc: "Force your font, size, indent, and colors over the author's layout",
         fontSize: "Font Size",
+        fontWeight: "Font Weight",
         textAlignLabel: "Text Alignment",
         alignLeft: "Left",
         alignJustify: "Justified",
         themeLabel: "Theme",
         paragraphIndent: "Paragraph Indent",
         lineSpacing: "Line Spacing",
-        margins: "Margins",
-        paraSpacing: "Spacing",
+        margins: "Side Margins",
+        marginsMenuLabel: "Margins",
+        marginLeftLabel: "Left Margin",
+        marginRightLabel: "Right Margin",
+        marginTopLabel: "Top Margin",
+        marginBottomLabel: "Bottom Margin",
+        resetMargins: "Reset",
+        paraSpacing: "Paragraph Spacing",
         readingThemes: "Reading Themes",
         createTheme: "+ Create Theme",
         toPalette: "+ To palette",
@@ -4744,6 +4858,9 @@ https://github.com/nodeca/pako/blob/main/LICENSE
         }
         if (typeof updateTextAlignUI === "function") {
           updateTextAlignUI();
+        }
+        if (typeof updateFontWeightUI === "function") {
+          updateFontWeightUI();
         }
       }
 
@@ -6099,13 +6216,19 @@ https://github.com/nodeca/pako/blob/main/LICENSE
     let highlightColors = [...DEFAULT_HIGHLIGHT_COLORS];
 
     const indentLevels = [0, 1.0, 1.5, 2.0, 2.5];
+    const fontWeightLevels = [300, 400, 500, 600, 700];
 
     let readerConfig = {
       fontFamily: "'Literata', serif",
       fontSize: 17,
+      fontWeight: 400,
       textIndent: 1.5,
       lineHeight: 1.85,
       marginSide: 24,
+      marginLeft: 24,
+      marginRight: 24,
+      marginTop: 64,
+      marginBottom: 80,
       paraSpacing: 18,
       textAlign: "justify",
       overrideAuthorStyles: true,
@@ -6662,6 +6785,9 @@ https://github.com/nodeca/pako/blob/main/LICENSE
             if (s.key === "language" && (s.val === "es" || s.val === "en")) applyLanguage(s.val);
             if (s.key === "readerConfig" && s.val) {
               Object.assign(readerConfig, s.val);
+              if (s.val.marginLeft === undefined && typeof s.val.marginSide === "number") readerConfig.marginLeft = s.val.marginSide;
+              if (s.val.marginRight === undefined && typeof s.val.marginSide === "number") readerConfig.marginRight = s.val.marginSide;
+              if (typeof normalizeReaderMargins === "function") normalizeReaderMargins();
               if (readerConfig.fontFamily === "'JetBrains Mono', monospace") readerConfig.fontFamily = "'Literata', serif";
             }
             if (s.key === "appConfig" && s.val) {
@@ -8419,10 +8545,14 @@ https://github.com/nodeca/pako/blob/main/LICENSE
       const content = document.getElementById("readerContent");
       const header = document.getElementById("readerHeader");
 
+      normalizeReaderMargins();
+
       if (scrollArea) {
         scrollArea.style.backgroundColor = readerConfig.bgColor;
-        scrollArea.style.paddingLeft = readerConfig.marginSide + "px";
-        scrollArea.style.paddingRight = readerConfig.marginSide + "px";
+        scrollArea.style.paddingLeft = readerConfig.marginLeft + "px";
+        scrollArea.style.paddingRight = readerConfig.marginRight + "px";
+        scrollArea.style.paddingTop = `calc(${readerConfig.marginTop}px + env(safe-area-inset-top, 0px))`;
+        scrollArea.style.paddingBottom = `calc(${readerConfig.marginBottom}px + env(safe-area-inset-bottom, 0px))`;
         if (typeof lastMenuToggleScrollTop !== "undefined" && readerControlsVisible) {
           lastMenuToggleScrollTop = scrollArea.scrollTop;
           requestAnimationFrame(() => {
@@ -8431,9 +8561,13 @@ https://github.com/nodeca/pako/blob/main/LICENSE
         }
       }
 
+      const activeFontWeight = fontWeightLevels.includes(Number(readerConfig.fontWeight)) ? Number(readerConfig.fontWeight) : 400;
+      readerConfig.fontWeight = activeFontWeight;
+
       if (content) {
         content.style.color = readerConfig.textColor;
         content.style.fontSize = readerConfig.fontSize + "px";
+        content.style.fontWeight = String(activeFontWeight);
         content.style.lineHeight = readerConfig.lineHeight;
         content.style.textAlign = readerConfig.textAlign;
         content.classList.toggle("override-author-styles", readerConfig.overrideAuthorStyles !== false);
@@ -8450,6 +8584,7 @@ https://github.com/nodeca/pako/blob/main/LICENSE
       const drawerBorderColor = isLightReader ? "rgba(0,0,0,0.10)" : "rgba(255,255,255,0.12)";
 
       document.documentElement.style.setProperty("--reader-font", readerConfig.fontFamily);
+      document.documentElement.style.setProperty("--reader-font-weight", String(activeFontWeight));
       document.documentElement.style.setProperty("--reader-bg", readerConfig.bgColor);
       document.documentElement.style.setProperty("--reader-surface", readerSurface);
       document.documentElement.style.setProperty("--reader-border", drawerBorderColor);
@@ -8468,17 +8603,26 @@ https://github.com/nodeca/pako/blob/main/LICENSE
       syncSwitchTrack(toggleBottomProgEl);
 
       if (typeof updateTextAlignUI === "function") updateTextAlignUI();
+      if (typeof updateFontWeightUI === "function") updateFontWeightUI();
 
       const fsDisp = document.getElementById("fontSizeDisplay");
       const inDisp = document.getElementById("indentDisplay");
       const lhDisp = document.getElementById("lineHeightDisplay");
-      const mgDisp = document.getElementById("marginDisplay");
+      const mgSumDisp = document.getElementById("marginsSummaryDisplay");
+      const mgLeftDisp = document.getElementById("marginLeftDisplay");
+      const mgRightDisp = document.getElementById("marginRightDisplay");
+      const mgTopDisp = document.getElementById("marginTopDisplay");
+      const mgBottomDisp = document.getElementById("marginBottomDisplay");
       const psDisp = document.getElementById("paraSpacingDisplay");
 
       if (fsDisp) fsDisp.textContent = readerConfig.fontSize + "px";
       if (inDisp) inDisp.textContent = readerConfig.textIndent > 0 ? readerConfig.textIndent + "em" : "0em";
-      if (lhDisp) lhDisp.textContent = readerConfig.lineHeight;
-      if (mgDisp) mgDisp.textContent = readerConfig.marginSide + "px";
+      if (lhDisp) lhDisp.textContent = Number(readerConfig.lineHeight).toFixed(2);
+      if (mgSumDisp) mgSumDisp.textContent = `${readerConfig.marginLeft} · ${readerConfig.marginRight}px`;
+      if (mgLeftDisp) mgLeftDisp.textContent = readerConfig.marginLeft + "px";
+      if (mgRightDisp) mgRightDisp.textContent = readerConfig.marginRight + "px";
+      if (mgTopDisp) mgTopDisp.textContent = readerConfig.marginTop + "px";
+      if (mgBottomDisp) mgBottomDisp.textContent = readerConfig.marginBottom + "px";
       if (psDisp) psDisp.textContent = readerConfig.paraSpacing + "px";
 
       const curFontLbl = document.getElementById("currentReaderFontLabel");
@@ -14168,6 +14312,24 @@ https://github.com/nodeca/pako/blob/main/LICENSE
       }
     }
 
+    function getNormalizedFontWeight(rawWeight) {
+      const w = Number(rawWeight);
+      return fontWeightLevels.includes(w) ? w : 400;
+    }
+
+    function getFontWeightLabel(weight) {
+      const w = getNormalizedFontWeight(weight);
+      const labels = currentLang === "es"
+        ? { 300: "Ligera", 400: "Normal", 500: "Media", 600: "Seminegrita", 700: "Negrita" }
+        : { 300: "Light", 400: "Regular", 500: "Medium", 600: "Semibold", 700: "Bold" };
+      return `${labels[w] || labels[400]} · ${w}`;
+    }
+
+    function updateFontWeightUI() {
+      const fwDisp = document.getElementById("fontWeightDisplay");
+      if (fwDisp) fwDisp.textContent = getFontWeightLabel(readerConfig.fontWeight);
+    }
+
     safeOn("btnReadingModeScroll", "click", () => {
       readerConfig.readingMode = "scroll";
       updateReadingModeUI();
@@ -14194,28 +14356,58 @@ https://github.com/nodeca/pako/blob/main/LICENSE
       dbSave("settings", { key: "readerConfig", val: readerConfig });
     });
 
+    function normalizeReaderMargins() {
+      const fallbackSide = typeof readerConfig.marginSide === "number" && !Number.isNaN(readerConfig.marginSide)
+        ? readerConfig.marginSide
+        : 24;
+      if (typeof readerConfig.marginLeft !== "number" || Number.isNaN(readerConfig.marginLeft)) {
+        readerConfig.marginLeft = fallbackSide;
+      }
+      if (typeof readerConfig.marginRight !== "number" || Number.isNaN(readerConfig.marginRight)) {
+        readerConfig.marginRight = fallbackSide;
+      }
+      if (typeof readerConfig.marginTop !== "number" || Number.isNaN(readerConfig.marginTop)) {
+        readerConfig.marginTop = 64;
+      }
+      if (typeof readerConfig.marginBottom !== "number" || Number.isNaN(readerConfig.marginBottom)) {
+        readerConfig.marginBottom = 80;
+      }
+      readerConfig.marginLeft = Math.max(8, Math.min(56, readerConfig.marginLeft));
+      readerConfig.marginRight = Math.max(8, Math.min(56, readerConfig.marginRight));
+      readerConfig.marginTop = Math.max(36, Math.min(112, readerConfig.marginTop));
+      readerConfig.marginBottom = Math.max(44, Math.min(128, readerConfig.marginBottom));
+      readerConfig.marginSide = Math.round((readerConfig.marginLeft + readerConfig.marginRight) / 2);
+    }
+
     function switchAaPanelView(viewName) {
       const mainView = document.getElementById("aaPanelMainView");
       const advView = document.getElementById("aaPanelAdvancedView");
+      const marginsView = document.getElementById("aaPanelMarginsView");
       if (!mainView || !advView) return;
-      if (viewName === "advanced") {
-        mainView.classList.add("hidden");
-        advView.classList.remove("hidden");
-      } else {
-        advView.classList.add("hidden");
-        mainView.classList.remove("hidden");
-      }
+      mainView.classList.toggle("hidden", viewName !== "main");
+      advView.classList.toggle("hidden", viewName !== "advanced");
+      if (marginsView) marginsView.classList.toggle("hidden", viewName !== "margins");
     }
 
     safeOn("btnOpenAaAdvancedView", "click", () => {
+      updateFontWeightUI();
       updateTextAlignUI();
       syncSwitchTrack(document.getElementById("toggleOverrideAuthorStyles"));
       syncSwitchTrack(document.getElementById("toggleBottomProgressBar"));
       switchAaPanelView("advanced");
     });
 
+    safeOn("btnOpenAaMarginsView", "click", () => {
+      applyReaderStyles();
+      switchAaPanelView("margins");
+    });
+
     safeOn("btnBackAaMainView", "click", () => {
       switchAaPanelView("main");
+    });
+
+    safeOn("btnBackAaAdvancedView", "click", () => {
+      switchAaPanelView("advanced");
     });
 
     const aaPanelEl = document.getElementById("panelTypography");
@@ -14236,6 +14428,7 @@ https://github.com/nodeca/pako/blob/main/LICENSE
 
     safeOn("btnCloseAaPanel", "click", closeAaPanel);
     safeOn("btnCloseAaPanelAdv", "click", closeAaPanel);
+    safeOn("btnCloseAaPanelMargins", "click", closeAaPanel);
 
     safeOn("btnToggleAa", "click", (e) => {
       e.stopPropagation();
@@ -14246,6 +14439,7 @@ https://github.com/nodeca/pako/blob/main/LICENSE
         switchAaPanelView("main");
         updateReadingModeUI();
         updateTextAlignUI();
+        updateFontWeightUI();
         buildReaderFontButtons();
         renderAaThemesGrid();
         syncSwitchTrack(document.getElementById("toggleOverrideAuthorStyles"));
@@ -14320,6 +14514,28 @@ https://github.com/nodeca/pako/blob/main/LICENSE
       }
     });
 
+    safeOn("btnFontWeightInc", "click", () => {
+      const w = getNormalizedFontWeight(readerConfig.fontWeight);
+      const currentIdx = fontWeightLevels.indexOf(w);
+      if (currentIdx !== -1 && currentIdx < fontWeightLevels.length - 1) {
+        readerConfig.fontWeight = fontWeightLevels[currentIdx + 1];
+        applyReaderStyles();
+        updateReaderPaginationIndicator();
+        scheduleSaveReaderConfig();
+      }
+    });
+
+    safeOn("btnFontWeightDec", "click", () => {
+      const w = getNormalizedFontWeight(readerConfig.fontWeight);
+      const currentIdx = fontWeightLevels.indexOf(w);
+      if (currentIdx > 0) {
+        readerConfig.fontWeight = fontWeightLevels[currentIdx - 1];
+        applyReaderStyles();
+        updateReaderPaginationIndicator();
+        scheduleSaveReaderConfig();
+      }
+    });
+
     safeOn("btnIndentInc", "click", () => {
       const currentIdx = indentLevels.indexOf(readerConfig.textIndent);
       if (currentIdx !== -1 && currentIdx < indentLevels.length - 1) {
@@ -14358,22 +14574,36 @@ https://github.com/nodeca/pako/blob/main/LICENSE
       }
     });
 
-    safeOn("btnMarginInc", "click", () => {
-      if (readerConfig.marginSide < 48) {
-        readerConfig.marginSide += 2;
+    function stepReaderMargin(key, delta, minVal, maxVal) {
+      normalizeReaderMargins();
+      const nextVal = Math.max(minVal, Math.min(maxVal, readerConfig[key] + delta));
+      if (nextVal !== readerConfig[key]) {
+        readerConfig[key] = nextVal;
+        normalizeReaderMargins();
         applyReaderStyles();
         updateReaderPaginationIndicator();
         scheduleSaveReaderConfig();
       }
-    });
+    }
 
-    safeOn("btnMarginDec", "click", () => {
-      if (readerConfig.marginSide > 10) {
-        readerConfig.marginSide -= 2;
-        applyReaderStyles();
-        updateReaderPaginationIndicator();
-        scheduleSaveReaderConfig();
-      }
+    safeOn("btnMarginLeftInc", "click", () => stepReaderMargin("marginLeft", 2, 8, 56));
+    safeOn("btnMarginLeftDec", "click", () => stepReaderMargin("marginLeft", -2, 8, 56));
+    safeOn("btnMarginRightInc", "click", () => stepReaderMargin("marginRight", 2, 8, 56));
+    safeOn("btnMarginRightDec", "click", () => stepReaderMargin("marginRight", -2, 8, 56));
+    safeOn("btnMarginTopInc", "click", () => stepReaderMargin("marginTop", 4, 36, 112));
+    safeOn("btnMarginTopDec", "click", () => stepReaderMargin("marginTop", -4, 36, 112));
+    safeOn("btnMarginBottomInc", "click", () => stepReaderMargin("marginBottom", 4, 44, 128));
+    safeOn("btnMarginBottomDec", "click", () => stepReaderMargin("marginBottom", -4, 44, 128));
+
+    safeOn("btnResetMargins", "click", () => {
+      readerConfig.marginLeft = 24;
+      readerConfig.marginRight = 24;
+      readerConfig.marginTop = 64;
+      readerConfig.marginBottom = 80;
+      readerConfig.marginSide = 24;
+      applyReaderStyles();
+      updateReaderPaginationIndicator();
+      scheduleSaveReaderConfig();
     });
 
     safeOn("btnParaSpacingInc", "click", () => {
@@ -15479,6 +15709,13 @@ https://github.com/nodeca/pako/blob/main/LICENSE
         const savedReaderCfg = findSetting("readerConfig");
         if (savedReaderCfg) {
           Object.assign(readerConfig, savedReaderCfg.val);
+          if (savedReaderCfg.val && savedReaderCfg.val.marginLeft === undefined && typeof savedReaderCfg.val.marginSide === "number") {
+            readerConfig.marginLeft = savedReaderCfg.val.marginSide;
+          }
+          if (savedReaderCfg.val && savedReaderCfg.val.marginRight === undefined && typeof savedReaderCfg.val.marginSide === "number") {
+            readerConfig.marginRight = savedReaderCfg.val.marginSide;
+          }
+          if (typeof normalizeReaderMargins === "function") normalizeReaderMargins();
           if (readerConfig.fontFamily === "'JetBrains Mono', monospace") readerConfig.fontFamily = "'Literata', serif";
         }
 
