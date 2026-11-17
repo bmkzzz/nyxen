@@ -2230,7 +2230,7 @@ https://github.com/nodeca/pako/blob/main/LICENSE
   <!-- Google Fonts Base -->
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Literata:ital,opsz,wght@0,7..72,300..700;1,7..72,300..700&family=Merriweather:ital,wght@0,300;0,400;0,700;1,300&family=Playfair+Display:ital,wght@0,400;0,600;0,700;1,400&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Literata:ital,opsz,wght@0,7..72,300..700;1,7..72,300..700&family=Lora:ital,wght@0,400..700;1,400..700&family=Merriweather:ital,wght@0,300;0,400;0,700;1,300&family=Playfair+Display:ital,wght@0,400;0,600;0,700;1,400&family=Plus+Jakarta+Sans:ital,wght@0,400..700;1,400..700&display=swap" rel="stylesheet">
   
   <style>
     :root {
@@ -4154,11 +4154,13 @@ https://github.com/nodeca/pako/blob/main/LICENSE
 
           <!-- TAB 2: TIPOGRAFÍA, RESALTADO Y ELEMENTOS -->
           <div id="qcPanelText" class="hidden space-y-2.5">
-            <div class="qc-opt-row" id="qcFontPicker">
-              <button type="button" class="qc-font-btn qc-opt-btn flex-1 text-center" data-font="literata" style="font-family:'Literata',serif;">Literata</button>
-              <button type="button" class="qc-font-btn qc-opt-btn flex-1 text-center" data-font="playfair" style="font-family:'Playfair Display',serif;">Playfair</button>
-              <button type="button" class="qc-font-btn qc-opt-btn flex-1 text-center" data-font="inter" style="font-family:'Inter',sans-serif;">Inter</button>
-              <button type="button" class="qc-font-btn qc-opt-btn flex-1 text-center" data-font="mono" style="font-family:'JetBrains Mono',monospace;">Mono</button>
+            <div class="grid grid-cols-3 gap-1" id="qcFontPicker">
+              <button type="button" class="qc-font-btn qc-opt-btn text-center" data-font="literata" style="font-family:'Literata',serif;">Literata</button>
+              <button type="button" class="qc-font-btn qc-opt-btn text-center" data-font="lora" style="font-family:'Lora',serif;">Lora</button>
+              <button type="button" class="qc-font-btn qc-opt-btn text-center" data-font="georgia" style="font-family:'Georgia',serif;">Georgia</button>
+              <button type="button" class="qc-font-btn qc-opt-btn text-center" data-font="playfair" style="font-family:'Playfair Display',serif;">Playfair</button>
+              <button type="button" class="qc-font-btn qc-opt-btn text-center" data-font="inter" style="font-family:'Inter',sans-serif;">Inter</button>
+              <button type="button" class="qc-font-btn qc-opt-btn text-center" data-font="jakarta" style="font-family:'Plus Jakarta Sans',sans-serif;">Jakarta</button>
             </div>
 
             <div class="flex items-center justify-between gap-3 py-0.5">
@@ -6124,10 +6126,12 @@ https://github.com/nodeca/pako/blob/main/LICENSE
 
     const baseFontsList = [
       { name: "Literata", val: "'Literata', serif" },
+      { name: "Lora", val: "'Lora', serif" },
+      { name: "Georgia", val: "'Georgia', serif" },
       { name: "Merriweather", val: "'Merriweather', serif" },
-      { name: "Inter", val: "'Inter', sans-serif" },
       { name: "Playfair", val: "'Playfair Display', serif" },
-      { name: "Mono", val: "'JetBrains Mono', monospace" }
+      { name: "Inter", val: "'Inter', sans-serif" },
+      { name: "Plus Jakarta Sans", val: "'Plus Jakarta Sans', sans-serif" }
     ];
 
     let readerControlsVisible = true;
@@ -6656,8 +6660,14 @@ https://github.com/nodeca/pako/blob/main/LICENSE
             if (!s || !s.key || s.key === "seededSample" || s.key === "openLastBookV2" || s.key === "lastOpenedBookId") continue;
             await dbSave("settings", s);
             if (s.key === "language" && (s.val === "es" || s.val === "en")) applyLanguage(s.val);
-            if (s.key === "readerConfig" && s.val) Object.assign(readerConfig, s.val);
-            if (s.key === "appConfig" && s.val) Object.assign(appConfig, s.val);
+            if (s.key === "readerConfig" && s.val) {
+              Object.assign(readerConfig, s.val);
+              if (readerConfig.fontFamily === "'JetBrains Mono', monospace") readerConfig.fontFamily = "'Literata', serif";
+            }
+            if (s.key === "appConfig" && s.val) {
+              Object.assign(appConfig, s.val);
+              if (appConfig.fontFamily === "'JetBrains Mono', monospace") appConfig.fontFamily = "'Inter', -apple-system, BlinkMacSystemFont, sans-serif";
+            }
             if (s.key === "activeTheme" && s.val) applyThemeToReader(s.val);
             if (s.key === "highlightColors" && Array.isArray(s.val) && s.val.length > 0) {
               highlightColors = s.val.filter(c => typeof c === "string" && /^#[0-9A-Fa-f]{6}$/i.test(c));
@@ -13057,9 +13067,11 @@ https://github.com/nodeca/pako/blob/main/LICENSE
     };
 
     function getQuoteCardFontFamily(preset) {
+      if (preset === "lora") return "'Lora', Georgia, serif";
+      if (preset === "georgia") return "'Georgia', serif";
       if (preset === "playfair") return "'Playfair Display', Georgia, serif";
       if (preset === "inter") return "'Inter', system-ui, sans-serif";
-      if (preset === "mono") return "'JetBrains Mono', monospace";
+      if (preset === "jakarta") return "'Plus Jakarta Sans', system-ui, sans-serif";
       return "'Literata', Georgia, serif";
     }
 
@@ -15465,7 +15477,10 @@ https://github.com/nodeca/pako/blob/main/LICENSE
         renderExistingColorList();
 
         const savedReaderCfg = findSetting("readerConfig");
-        if (savedReaderCfg) Object.assign(readerConfig, savedReaderCfg.val);
+        if (savedReaderCfg) {
+          Object.assign(readerConfig, savedReaderCfg.val);
+          if (readerConfig.fontFamily === "'JetBrains Mono', monospace") readerConfig.fontFamily = "'Literata', serif";
+        }
 
         const savedWpm = findSetting("readingWpm");
         if (savedWpm && typeof savedWpm.val === "number" && savedWpm.val >= 120 && savedWpm.val <= 420) {
@@ -15494,7 +15509,10 @@ https://github.com/nodeca/pako/blob/main/LICENSE
         updateLibViewMenuUI();
 
         const savedAppCfg = findSetting("appConfig");
-        if (savedAppCfg) Object.assign(appConfig, savedAppCfg.val);
+        if (savedAppCfg) {
+          Object.assign(appConfig, savedAppCfg.val);
+          if (appConfig.fontFamily === "'JetBrains Mono', monospace") appConfig.fontFamily = "'Inter', -apple-system, BlinkMacSystemFont, sans-serif";
+        }
 
         const activeTheme = findSetting("activeTheme");
         if (activeTheme) applyThemeToReader(activeTheme.val, { persist: false });
