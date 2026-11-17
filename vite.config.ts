@@ -21,10 +21,13 @@ export default defineConfig(() => {
           theme_color: '#121212',
           background_color: '#121212',
           display: 'standalone',
+          display_override: ['standalone', 'minimal-ui'],
           orientation: 'any',
           start_url: '/',
           scope: '/',
           lang: 'es',
+          dir: 'ltr',
+          prefer_related_applications: false,
           categories: ['books', 'education', 'utilities'],
           icons: [
             {
