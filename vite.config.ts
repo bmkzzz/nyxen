@@ -55,8 +55,8 @@ export default defineConfig(() => {
           clientsClaim: true,
           skipWaiting: true,
           globPatterns: ['**/*.{js,css,html,ico,png,svg,woff,woff2,webmanifest}'],
-          globIgnores: ['assets/aistudio/**'],
-          ignoreURLParametersMatching: [/^v$/, /^utm_/, /^fbclid$/],
+          globIgnores: ['assets/aistudio/**', 'Nyxen_EPUB_Reader.html'],
+          ignoreURLParametersMatching: [/^utm_/, /^fbclid$/],
           navigateFallback: '/index.html',
           navigateFallbackDenylist: [/^\/Nyxen_EPUB_Reader\.html/],
           maximumFileSizeToCacheInBytes: 5 * 1024 * 1024,
@@ -66,11 +66,9 @@ export default defineConfig(() => {
               handler: 'NetworkFirst',
               options: {
                 cacheName: 'nyxen-reader-html-cache',
-                matchOptions: {
-                  ignoreSearch: true,
-                },
+                networkTimeoutSeconds: 2,
                 expiration: {
-                  maxEntries: 2,
+                  maxEntries: 3,
                   maxAgeSeconds: 60 * 60 * 24 * 30,
                 },
                 cacheableResponse: {
@@ -123,8 +121,7 @@ export default defineConfig(() => {
           ],
         },
         devOptions: {
-          enabled: true,
-          type: 'module',
+          enabled: false,
         },
       }),
     ],

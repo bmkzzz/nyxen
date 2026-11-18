@@ -2596,120 +2596,347 @@ https://github.com/nodeca/pako/blob/main/LICENSE
       background-color: rgba(128, 128, 128, 0.1);
     }
 
-    /* Tarjeta de cita minimalista: vista limpia sin marco morado y controles ligeros */
+    /* Tarjeta de cita ultra-limpia: sin pastillas, sin recuadros ni cuadros */
     #quoteCardCanvas {
       border: 0 !important;
-      box-shadow: 0 12px 32px -6px rgba(0, 0, 0, 0.14), 0 2px 6px rgba(0, 0, 0, 0.05);
+      box-shadow: 0 12px 32px -6px rgba(0, 0, 0, 0.16), 0 2px 6px rgba(0, 0, 0, 0.06);
     }
-    .qc-tabs-track {
+    .qc-tabs-clean {
       display: grid;
       grid-template-columns: repeat(2, minmax(0, 1fr));
       gap: 4px;
       border-bottom: 1px solid var(--app-border);
-      padding-bottom: 2px;
     }
-    .qc-tab-underline {
+    .qc-tab-clean {
       position: relative;
-      padding: 6px 6px 8px;
-      font-size: 12px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      padding: 7px 10px 9px;
+      font-size: 12.5px;
       font-weight: 600;
-      background: transparent !important;
       border: 0 !important;
-      opacity: 0.72;
-      transition: opacity 0.15s ease, color 0.15s ease;
+      background: transparent !important;
+      color: var(--app-text);
+      opacity: 0.55;
+      cursor: pointer;
+      transition: color 0.15s ease, opacity 0.15s ease;
     }
-    .qc-tab-underline.is-active {
-      opacity: 1;
+    .qc-tab-clean:hover {
+      opacity: 0.9;
+    }
+    .qc-tab-clean.is-active {
       color: var(--app-accent);
+      opacity: 1;
     }
-    .qc-tab-underline::after {
+    .qc-tab-clean::after {
       content: "";
       position: absolute;
       left: 22%;
       right: 22%;
-      bottom: -3px;
+      bottom: -1px;
       height: 2px;
-      border-radius: 9999px;
       background-color: var(--app-accent);
       transform: scaleX(0);
       transition: transform 0.18s ease;
     }
-    .qc-tab-underline.is-active::after {
+    .qc-tab-clean.is-active::after {
       transform: scaleX(1);
     }
-    .qc-opt-row {
+    .qc-row {
       display: flex;
       align-items: center;
-      gap: 4px;
-      flex-wrap: wrap;
+      justify-content: space-between;
+      gap: 12px;
+      min-height: 36px;
     }
-    .qc-opt-btn {
-      padding: 6px 10px;
-      border-radius: 8px;
-      font-size: 11.5px;
-      font-weight: 500;
+    .qc-row-clickable {
+      width: 100%;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      min-height: 36px;
+      padding: 4px 0;
       border: 0 !important;
-      background-color: transparent;
+      background: transparent !important;
       color: var(--app-text);
-      opacity: 0.72;
-      transition: background-color 0.15s ease, color 0.15s ease, opacity 0.15s ease;
+      text-align: left;
+      cursor: pointer;
+      opacity: 0.88;
+      transition: opacity 0.15s ease;
     }
-    .qc-opt-btn:hover {
-      opacity: 0.92;
-      background-color: rgba(128, 128, 128, 0.07);
-    }
-    .qc-opt-btn.is-active {
-      background-color: rgba(157, 78, 221, 0.14);
-      color: var(--app-accent);
-      font-weight: 600;
+    .qc-row-clickable:hover {
       opacity: 1;
     }
-    .qc-flat-action {
-      border: 1px solid var(--app-border);
-      background-color: transparent;
-      color: var(--app-text);
-      border-radius: 10px;
-      padding: 8px 12px;
-      font-size: 11.5px;
-      font-weight: 500;
-      transition: background-color 0.15s ease;
+    .qc-row-left {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      min-width: 0;
+      flex: 1;
     }
-    .qc-flat-action:hover {
-      background-color: rgba(128, 128, 128, 0.06);
+    .qc-row-icon {
+      width: 20px;
+      height: 20px;
+      flex-shrink: 0;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      opacity: 0.82;
+      color: var(--app-text);
+    }
+    .qc-row-icon-spacer {
+      width: 20px;
+      flex-shrink: 0;
+    }
+    .qc-row-label {
+      font-size: 13px;
+      font-weight: 500;
+      color: var(--app-text);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .qc-row-right-meta {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      flex-shrink: 0;
+      font-size: 12.5px;
+      font-weight: 500;
+      color: var(--app-text);
+      opacity: 0.85;
+    }
+    .qc-seg-group {
+      display: inline-flex;
+      align-items: center;
+      gap: 12px;
+      flex-shrink: 0;
+    }
+    .qc-opt {
+      position: relative;
+      min-width: 22px;
+      height: 28px;
+      padding: 0 2px;
+      font-size: 12.5px;
+      font-weight: 500;
+      border: 0 !important;
+      background: transparent !important;
+      color: var(--app-text);
+      opacity: 0.45;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      transition: color 0.15s ease, opacity 0.15s ease;
+    }
+    .qc-opt:hover {
+      opacity: 0.88;
+      background: transparent !important;
+    }
+    .qc-opt.is-active {
+      background: transparent !important;
+      color: var(--app-accent);
+      font-weight: 700;
+      opacity: 1;
+    }
+    .qc-opt::after {
+      content: "";
+      position: absolute;
+      left: 2px;
+      right: 2px;
+      bottom: 2px;
+      height: 2px;
+      background-color: var(--app-accent);
+      transform: scaleX(0);
+      transition: transform 0.15s ease;
+    }
+    .qc-opt.is-active::after {
+      transform: scaleX(1);
+    }
+    .qc-subview-header {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding-bottom: 6px;
+      border-bottom: 1px solid var(--app-border);
+    }
+    .qc-back-btn {
+      width: 28px;
+      height: 28px;
+      border: 0 !important;
+      background: transparent !important;
+      color: var(--app-text);
+      opacity: 0.72;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      transition: opacity 0.15s ease;
+    }
+    .qc-back-btn:hover {
+      opacity: 1;
+    }
+    .qc-font-grid-btn {
+      position: relative;
+      padding: 7px 4px;
+      font-size: 13px;
+      font-weight: 500;
+      border: 0 !important;
+      background: transparent !important;
+      color: var(--app-text);
+      opacity: 0.56;
+      text-align: center;
+      cursor: pointer;
+      transition: color 0.15s ease, opacity 0.15s ease;
+    }
+    .qc-font-grid-btn:hover {
+      opacity: 0.92;
+      background: transparent !important;
+    }
+    .qc-font-grid-btn.is-active {
+      background: transparent !important;
+      color: var(--app-accent);
+      font-weight: 700;
+      opacity: 1;
+    }
+    .qc-text-action {
+      border: 0 !important;
+      background: transparent !important;
+      color: var(--app-text);
+      padding: 6px 0;
+      font-size: 12.5px;
+      font-weight: 500;
+      opacity: 0.72;
+      cursor: pointer;
+      transition: opacity 0.15s ease, color 0.15s ease;
+    }
+    .qc-text-action:hover {
+      opacity: 1;
+    }
+    .qc-action-btn-secondary {
+      height: 36px;
+      border: 0 !important;
+      background: transparent !important;
+      color: var(--app-text);
+      font-size: 13px;
+      font-weight: 600;
+      opacity: 0.78;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 7px;
+      cursor: pointer;
+      transition: opacity 0.15s ease, transform 0.12s ease;
+    }
+    .qc-action-btn-secondary:hover {
+      opacity: 1;
+      background: transparent !important;
+    }
+    .qc-action-btn-primary {
+      height: 36px;
+      border: 0 !important;
+      background: transparent !important;
+      color: var(--app-accent);
+      font-size: 13px;
+      font-weight: 700;
+      opacity: 0.94;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 7px;
+      cursor: pointer;
+      transition: opacity 0.15s ease, transform 0.12s ease;
+    }
+    .qc-action-btn-primary:hover {
+      opacity: 1;
+      background: transparent !important;
     }
     .qc-check-item {
       display: inline-flex;
       align-items: center;
-      gap: 6px;
-      padding: 4px 6px 4px 2px;
+      gap: 5px;
+      padding: 3px 2px 3px 0;
       font-size: 11.5px;
       font-weight: 500;
       color: var(--app-text);
-      opacity: 0.78;
+      opacity: 0.52;
       cursor: pointer;
       user-select: none;
       transition: opacity 0.15s ease, color 0.15s ease;
     }
-    .qc-check-item.is-checked {
-      opacity: 1;
+    .qc-check-item:hover {
+      opacity: 0.85;
     }
-    .qc-check-box {
-      width: 15px;
-      height: 15px;
-      border-radius: 4px;
-      border: 1.5px solid var(--app-border);
+    .qc-check-item.is-checked {
+      opacity: 0.98;
+      color: var(--app-text);
+    }
+    .qc-check-mark {
       display: inline-flex;
       align-items: center;
       justify-content: center;
-      font-size: 10px;
+      width: 12px;
+      font-size: 11px;
+      font-weight: 700;
       line-height: 1;
-      color: transparent;
-      transition: background-color 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+      color: var(--app-text);
+      opacity: 0.35;
+      transition: opacity 0.15s ease, color 0.15s ease;
     }
-    .qc-check-item.is-checked .qc-check-box {
-      background-color: var(--app-accent);
-      border-color: var(--app-accent);
-      color: #ffffff;
+    .qc-check-item.is-checked .qc-check-mark {
+      color: var(--app-accent);
+      opacity: 1;
+    }
+    .qc-help-btn {
+      width: 16px;
+      height: 16px;
+      border: 0 !important;
+      background: transparent !important;
+      color: var(--app-text);
+      opacity: 0.55;
+      font-size: 11.5px;
+      font-weight: 700;
+      line-height: 1;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+      cursor: pointer;
+      transition: opacity 0.15s ease, color 0.15s ease;
+    }
+    .qc-help-btn:hover,
+    .qc-help-btn.is-open {
+      opacity: 1;
+      color: var(--app-accent);
+      background: transparent !important;
+    }
+    .qc-help-popover {
+      position: absolute;
+      left: 16px;
+      right: 16px;
+      bottom: 84px;
+      padding: 10px 12px;
+      border-radius: 12px;
+      border: 1px solid var(--app-border);
+      background-color: var(--app-surface);
+      color: var(--app-text);
+      box-shadow: 0 14px 32px -6px rgba(0, 0, 0, 0.34), 0 4px 12px rgba(0, 0, 0, 0.14);
+      z-index: 30;
+      font-size: 11px;
+      line-height: 1.45;
+    }
+    .qc-help-popover-title {
+      font-weight: 600;
+      font-size: 11.5px;
+      margin-bottom: 3px;
+      color: var(--app-text);
+    }
+    .qc-help-popover-desc {
+      opacity: 0.82;
+      margin: 0;
     }
   </style>
 </head>
@@ -4201,116 +4428,226 @@ https://github.com/nodeca/pako/blob/main/LICENSE
 
     <!-- MODAL TARJETA DE CITA (SHARE CARD) -->
     <div id="quoteCardModal" class="hidden fixed inset-0 z-[70] bg-black/75 backdrop-blur-sm flex items-end sm:items-center justify-center p-2.5 sm:p-3">
-      <div class="w-full max-w-md rounded-[26px] p-4 sm:p-5 shadow-2xl space-y-3 modal-scale-enter max-h-[92dvh] flex flex-col" style="background-color: var(--app-surface); color: var(--app-text);">
+      <div id="quoteCardModalCard" class="relative w-full max-w-md rounded-[26px] p-4 sm:p-5 shadow-2xl space-y-3 modal-scale-enter max-h-[92dvh] flex flex-col" style="background-color: var(--app-surface); color: var(--app-text);">
         <div class="flex items-center justify-between flex-shrink-0">
-          <h3 class="text-sm font-semibold tracking-tight" data-i18n="shareCardTitle">Tarjeta de cita</h3>
+          <h3 class="text-base font-semibold tracking-tight" data-i18n="shareCardTitle">Tarjeta de cita</h3>
           <button type="button" id="btnCloseQuoteCardModal" class="ctx-action-row w-7 h-7 rounded-full flex items-center justify-center opacity-55 hover:opacity-100 transition text-xs">✕</button>
         </div>
 
-        <div class="flex-shrink-0 flex items-center justify-center py-1">
-          <canvas id="quoteCardCanvas" class="max-w-full max-h-[38dvh] w-auto h-auto rounded-2xl object-contain"></canvas>
+        <div class="flex-shrink-0 flex items-center justify-center py-0.5">
+          <canvas id="quoteCardCanvas" class="max-w-full max-h-[36dvh] w-auto h-auto rounded-2xl object-contain"></canvas>
         </div>
 
-        <!-- Tabs minimalistas con subrayado (2 pestañas: Tarjeta y Texto) -->
-        <div class="qc-tabs-track flex-shrink-0">
-          <button type="button" class="qc-tab-btn qc-tab-underline" data-qctab="bg" data-i18n="qcTabBg">Tarjeta</button>
-          <button type="button" class="qc-tab-btn qc-tab-underline" data-qctab="text" data-i18n="qcTabText">Texto</button>
+        <!-- Tabs limpias con subrayado sutil (Tarjeta / Texto) -->
+        <div class="qc-tabs-clean flex-shrink-0">
+          <button type="button" class="qc-tab-btn qc-tab-clean is-active" data-qctab="bg">
+            <svg class="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" stroke-width="1.85" viewBox="0 0 24 24"><rect x="3.5" y="5" width="17" height="14" rx="2.5"></rect><path stroke-linecap="round" d="M7.5 10h6M7.5 13.5h4M15.5 13.5h1"></path></svg>
+            <span data-i18n="qcTabBg">Tarjeta</span>
+          </button>
+          <button type="button" class="qc-tab-btn qc-tab-clean" data-qctab="text">
+            <span class="text-sm font-serif leading-none">T</span>
+            <span data-i18n="qcTabText">Texto</span>
+          </button>
         </div>
 
-        <!-- Controles minimalistas scrollables -->
-        <div class="flex-1 min-h-0 overflow-y-auto space-y-3 pr-0.5 pt-0.5">
-          <!-- TAB 1: TARJETA, FONDO Y PROPORCIÓN -->
+        <!-- Controles scrollables -->
+        <div class="flex-1 min-h-0 overflow-y-auto pr-0.5 pt-0.5">
+          <!-- TAB 1: TARJETA (Tema, Portada, Proporción) -->
           <div id="qcPanelBg" class="space-y-2.5">
-            <div class="qc-opt-row" id="quoteCardStylePicker">
-              <button type="button" class="quote-card-style-btn qc-opt-btn flex-1 text-center" data-style="theme" data-i18n="cardStyleTheme">Tema</button>
-              <button type="button" class="quote-card-style-btn qc-opt-btn flex-1 text-center" data-style="cover" data-i18n="cardStyleCover">Portada</button>
+            <button type="button" id="btnQcOpenThemeSub" class="qc-row-clickable">
+              <span class="qc-row-left">
+                <span class="qc-row-icon">
+                  <svg class="w-[18px] h-[18px]" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M12 3.25a8.75 8.75 0 100 17.5 1.75 1.75 0 001.75-1.75c0-.46-.18-.89-.48-1.2a1.65 1.65 0 011.18-2.8h2.05A4.25 4.25 0 0020.75 10.75C20.75 6.4 16.82 3.25 12 3.25z"></path><circle cx="7.75" cy="11.25" r="1" fill="currentColor" stroke="none"></circle><circle cx="10.25" cy="7.75" r="1" fill="currentColor" stroke="none"></circle><circle cx="14.75" cy="7.75" r="1" fill="currentColor" stroke="none"></circle><circle cx="16.5" cy="11.25" r="1" fill="currentColor" stroke="none"></circle></svg>
+                </span>
+                <span class="qc-row-label" data-i18n="qcThemeRowLabel">Tema</span>
+              </span>
+              <span class="qc-row-right-meta">
+                <span id="qcCardPreviewDot" class="w-6 h-6 rounded-full flex-shrink-0" style="background-color: #F1ECE1; box-shadow: inset 0 0 0 1px rgba(128,128,128,0.28);"></span>
+                <svg class="w-4 h-4 opacity-55" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M9 6l6 6-6 6"></path></svg>
+              </span>
+            </button>
+
+            <div class="qc-row">
+              <div class="qc-row-left">
+                <span class="qc-row-icon">
+                  <svg class="w-[18px] h-[18px]" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><rect x="3.5" y="4.5" width="17" height="15" rx="2.75"></rect><circle cx="8.75" cy="9.5" r="1.35" fill="currentColor" stroke="none"></circle><path stroke-linecap="round" stroke-linejoin="round" d="M4.2 16.5l4.4-4.3a2.2 2.2 0 013.1.05l2.3 2.25 1.5-1.5a2 2 0 012.8 0l1.9 1.9"></path></svg>
+                </span>
+                <span class="qc-row-label" data-i18n="cardStyleCover">Portada</span>
+              </div>
+              <label class="relative inline-flex items-center flex-shrink-0 cursor-pointer">
+                <input type="checkbox" id="toggleQuoteCardCover" class="sr-only peer">
+                <span class="w-8 h-[18px] rounded-full transition-colors border peer-checked:border-transparent" style="background-color: var(--app-bg); border-color: var(--app-border);"></span>
+                <span class="absolute left-0.5 w-3.5 h-3.5 rounded-full bg-white border border-black/15 shadow-md transition-transform peer-checked:translate-x-3.5"></span>
+              </label>
             </div>
 
-            <div class="grid grid-cols-2 gap-2">
-              <button type="button" id="btnQcCustomCard" class="qc-flat-action flex items-center justify-between gap-2 active:scale-95">
-                <span class="truncate" data-i18n="qcPaperColor">Tarjeta</span>
-                <span id="qcCardPreviewDot" class="w-4 h-4 rounded-full flex-shrink-0" style="background-color: #F1ECE1; box-shadow: inset 0 0 0 1px rgba(0,0,0,0.16);"></span>
-              </button>
-              <button type="button" id="btnQcUploadBgImg" class="qc-flat-action flex items-center justify-center gap-1.5 active:scale-95">
-                <svg class="w-3.5 h-3.5 opacity-70 flex-shrink-0" fill="none" stroke="currentColor" stroke-width="1.95" viewBox="0 0 24 24"><rect x="3.5" y="4" width="17" height="16" rx="3.25"></rect><circle cx="9" cy="9.25" r="1.35" fill="currentColor" stroke="none"></circle><path stroke-linecap="round" stroke-linejoin="round" d="M4 16.75l4.8-4.7a2.5 2.5 0 013.5.05l2.5 2.45M14.2 14.3l1.35-1.35a2.25 2.25 0 013.15 0l1.8 1.8"></path></svg>
-                <span class="truncate" data-i18n="qcImageBtn">Imagen</span>
-              </button>
-              <input type="file" id="qcBgImageFileInput" accept="image/*" class="hidden">
-            </div>
-
-            <div class="flex items-center justify-between gap-2 pt-0.5">
-              <span class="text-[11px] font-medium opacity-70" data-i18n="qcAspectLabel">Proporción</span>
-              <div class="qc-opt-row" id="qcRatioPicker">
-                <button type="button" class="qc-ratio-btn qc-opt-btn" data-ratio="1:1">1:1</button>
-                <button type="button" class="qc-ratio-btn qc-opt-btn" data-ratio="4:5">4:5</button>
+            <div class="qc-row">
+              <div class="qc-row-left">
+                <span class="qc-row-icon">
+                  <svg class="w-[18px] h-[18px]" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M6.5 3.5v12.5a1.5 1.5 0 001.5 1.5h12.5M3.5 6.5h12.5a1.5 1.5 0 011.5 1.5v12.5"></path></svg>
+                </span>
+                <span class="qc-row-label" data-i18n="qcAspectLabel">Proporción</span>
+              </div>
+              <div class="qc-seg-group" id="qcRatioPicker">
+                <button type="button" class="qc-ratio-btn qc-opt" data-ratio="1:1">1:1</button>
+                <button type="button" class="qc-ratio-btn qc-opt" data-ratio="4:5">4:5</button>
               </div>
             </div>
+          </div>
 
-            <div id="qcCustomImgRow" class="hidden flex items-center justify-between px-2.5 py-1.5 rounded-lg text-[11px]" style="border: 1px solid var(--app-border);">
+          <!-- SUBVISTA: TEMA / COLOR Y FONDO PERSONALIZADO -->
+          <div id="qcPanelThemeSub" class="hidden space-y-2">
+            <div class="qc-subview-header">
+              <button type="button" id="btnQcBackFromTheme" class="qc-back-btn" aria-label="Volver">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2.1" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M15 6l-6 6 6 6"></path></svg>
+              </button>
+              <span class="text-xs font-semibold" data-i18n="qcThemeSubTitle">Apariencia de tarjeta</span>
+            </div>
+
+            <button type="button" id="btnQcCustomCard" class="qc-row-clickable">
+              <span class="qc-row-left">
+                <span class="qc-row-icon">
+                  <svg class="w-[18px] h-[18px]" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M12 3.25a8.75 8.75 0 100 17.5 1.75 1.75 0 001.75-1.75c0-.46-.18-.89-.48-1.2a1.65 1.65 0 011.18-2.8h2.05A4.25 4.25 0 0020.75 10.75C20.75 6.4 16.82 3.25 12 3.25z"></path></svg>
+                </span>
+                <span class="qc-row-label" data-i18n="qcCustomColorBtn">Color tarjeta</span>
+              </span>
+              <span class="qc-row-right-meta">
+                <span id="qcCardSubPreviewDot" class="w-5 h-5 rounded-full flex-shrink-0" style="background-color: #F1ECE1; box-shadow: inset 0 0 0 1px rgba(128,128,128,0.28);"></span>
+              </span>
+            </button>
+
+            <button type="button" id="btnQcUploadBgImg" class="qc-row-clickable">
+              <span class="qc-row-left">
+                <span class="qc-row-icon">
+                  <svg class="w-[18px] h-[18px]" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><rect x="3.5" y="4.5" width="17" height="15" rx="2.75"></rect><circle cx="8.75" cy="9.5" r="1.35" fill="currentColor" stroke="none"></circle><path stroke-linecap="round" stroke-linejoin="round" d="M4.2 16.5l4.4-4.3a2.2 2.2 0 013.1.05l2.3 2.25 1.5-1.5a2 2 0 012.8 0l1.9 1.9"></path></svg>
+                </span>
+                <span class="qc-row-label" data-i18n="qcImageBtn">Imagen</span>
+              </span>
+              <span class="qc-row-right-meta">
+                <svg class="w-4 h-4 opacity-55" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M9 6l6 6-6 6"></path></svg>
+              </span>
+            </button>
+            <input type="file" id="qcBgImageFileInput" accept="image/*" class="hidden">
+
+            <button type="button" id="btnQcResetCardTheme" class="hidden qc-text-action w-full text-left" style="color: var(--app-accent);">
+              <span data-i18n="qcResetThemeColor">Restaurar color del tema de lectura</span>
+            </button>
+
+            <div id="qcCustomImgRow" class="hidden flex items-center justify-between py-1 text-xs">
               <span class="opacity-70" data-i18n="qcCustomBgActive">Imagen de fondo activa</span>
               <button type="button" id="btnQcClearBgImg" class="text-red-400 font-semibold hover:underline" data-i18n="qcClearBgImg">Quitar</button>
             </div>
           </div>
 
-          <!-- TAB 2: TIPOGRAFÍA, RESALTADO Y ELEMENTOS -->
+          <!-- TAB 2: TEXTO (Fuente >, Tamaño, Alineación, Resaltado, Extras) -->
           <div id="qcPanelText" class="hidden space-y-2.5">
-            <div class="grid grid-cols-3 gap-1" id="qcFontPicker">
-              <button type="button" class="qc-font-btn qc-opt-btn text-center" data-font="literata" style="font-family:'Literata',serif;">Literata</button>
-              <button type="button" class="qc-font-btn qc-opt-btn text-center" data-font="lora" style="font-family:'Lora',serif;">Lora</button>
-              <button type="button" class="qc-font-btn qc-opt-btn text-center" data-font="georgia" style="font-family:'Georgia',serif;">Georgia</button>
-              <button type="button" class="qc-font-btn qc-opt-btn text-center" data-font="playfair" style="font-family:'Playfair Display',serif;">Playfair</button>
-              <button type="button" class="qc-font-btn qc-opt-btn text-center" data-font="inter" style="font-family:'Inter',sans-serif;">Inter</button>
-              <button type="button" class="qc-font-btn qc-opt-btn text-center" data-font="jakarta" style="font-family:'Plus Jakarta Sans',sans-serif;">Jakarta</button>
-            </div>
+            <button type="button" id="btnQcOpenFontSub" class="qc-row-clickable">
+              <span class="qc-row-left">
+                <span class="qc-row-icon font-semibold text-xs tracking-tight">Aa</span>
+                <span class="qc-row-label" data-i18n="qcFontLabel">Fuente</span>
+              </span>
+              <span class="qc-row-right-meta">
+                <span id="qcCurrentFontLabel">Literata</span>
+                <svg class="w-4 h-4 opacity-55" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M9 6l6 6-6 6"></path></svg>
+              </span>
+            </button>
 
-            <div class="flex items-center justify-between gap-3 py-0.5">
-              <div class="flex items-center gap-1" id="qcSizePicker">
-                <button type="button" class="qc-size-btn qc-opt-btn" data-size="sm">S</button>
-                <button type="button" class="qc-size-btn qc-opt-btn" data-size="md">M</button>
-                <button type="button" class="qc-size-btn qc-opt-btn" data-size="lg">L</button>
+            <div class="qc-row">
+              <div class="qc-row-left">
+                <span class="qc-row-icon-spacer"></span>
+                <span class="qc-row-label" data-i18n="qcTextSizeLabel">Tamaño</span>
               </div>
-              <div class="h-4 w-[1px] opacity-20" style="background-color: var(--app-text);"></div>
-              <div class="flex items-center gap-1" id="qcAlignPicker">
-                <button type="button" class="qc-align-btn qc-opt-btn" data-align="left" data-i18n="alignLeft">Izquierda</button>
-                <button type="button" class="qc-align-btn qc-opt-btn" data-align="center" data-i18n="qcAlignCenter">Centro</button>
-              </div>
-            </div>
-
-            <div id="qcHighlightControlRow" class="flex items-center justify-between gap-2 py-0.5">
-              <span class="text-[11px] font-medium opacity-70 flex-shrink-0" data-i18n="qcHighlightStyleLabel">Resaltado</span>
-              <div class="qc-opt-row justify-end" id="qcHighlightStylePicker">
-                <button type="button" id="qcHlOriginalBtn" class="qc-hlstyle-btn qc-opt-btn" data-hlstyle="original" data-i18n="qcHlOriginal">Original</button>
-                <button type="button" class="qc-hlstyle-btn qc-opt-btn" data-hlstyle="bar" data-i18n="qcHlBar">Barra</button>
-                <button type="button" class="qc-hlstyle-btn qc-opt-btn" data-hlstyle="none" data-i18n="qcHlNone">Limpio</button>
+              <div class="qc-seg-group" id="qcSizePicker">
+                <button type="button" class="qc-size-btn qc-opt" data-size="sm">S</button>
+                <button type="button" class="qc-size-btn qc-opt" data-size="md">M</button>
+                <button type="button" class="qc-size-btn qc-opt" data-size="lg">L</button>
               </div>
             </div>
 
-            <div class="flex items-center gap-3 flex-wrap pt-1 border-t" style="border-color: var(--app-border);">
+            <div class="qc-row">
+              <div class="qc-row-left">
+                <span class="qc-row-icon-spacer"></span>
+                <span class="qc-row-label" data-i18n="qcAlignLabel">Alineación</span>
+              </div>
+              <div class="qc-seg-group" id="qcAlignPicker">
+                <button type="button" class="qc-align-btn qc-opt" data-align="left" data-i18n-title="alignLeft" title="Izquierda">
+                  <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="1.9" viewBox="0 0 24 24"><path stroke-linecap="round" d="M4 7h14M4 12h10M4 17h14"></path></svg>
+                </button>
+                <button type="button" class="qc-align-btn qc-opt" data-align="center" data-i18n-title="qcAlignCenter" title="Centro">
+                  <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="1.9" viewBox="0 0 24 24"><path stroke-linecap="round" d="M5 7h14M7.5 12h9M5 17h14"></path></svg>
+                </button>
+                <button type="button" class="qc-align-btn qc-opt" data-align="right" data-i18n-title="qcAlignRight" title="Derecha">
+                  <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="1.9" viewBox="0 0 24 24"><path stroke-linecap="round" d="M6 7h14M10 12h10M6 17h14"></path></svg>
+                </button>
+              </div>
+            </div>
+
+            <div id="qcHighlightControlRow" class="qc-row hidden">
+              <div class="qc-row-left">
+                <span class="qc-row-icon">
+                  <svg class="w-[18px] h-[18px]" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M12 3.5l1.95 5.05L19 10.5l-5.05 1.95L12 17.5l-1.95-5.05L5 10.5l5.05-1.95L12 3.5z"></path></svg>
+                </span>
+                <div class="flex items-center gap-1 min-w-0">
+                  <span class="qc-row-label" data-i18n="qcHighlightStyleLabel">Resaltado</span>
+                  <button type="button" id="btnQcHighlightHelp" class="qc-help-btn" aria-expanded="false" aria-controls="qcHighlightHelpPopover" data-i18n-title="qcHighlightHelpBtnTitle" title="¿Cómo funciona?">?</button>
+                </div>
+              </div>
+              <label class="relative inline-flex items-center flex-shrink-0 cursor-pointer">
+                <input type="checkbox" id="toggleQuoteCardHighlight" class="sr-only peer" checked="">
+                <span class="w-8 h-[18px] rounded-full transition-colors border peer-checked:border-transparent" style="background-color: var(--app-bg); border-color: var(--app-border);"></span>
+                <span class="absolute left-0.5 w-3.5 h-3.5 rounded-full bg-white border border-black/15 shadow-md transition-transform peer-checked:translate-x-3.5"></span>
+              </label>
+            </div>
+
+            <div class="flex items-center gap-4 flex-wrap pt-2 border-t" style="border-color: var(--app-border);">
               <label class="qc-check-item" id="qcChipMeta">
                 <input type="checkbox" id="toggleQuoteCardMeta" class="sr-only" checked="">
-                <span class="qc-check-box">✓</span>
+                <span class="qc-check-mark">✓</span>
                 <span data-i18n="qcShowBookMeta">Libro y capítulo</span>
               </label>
               <label class="qc-check-item" id="qcChipGlyph">
                 <input type="checkbox" id="toggleQuoteCardGlyph" class="sr-only">
-                <span class="qc-check-box">✓</span>
+                <span class="qc-check-mark">✓</span>
                 <span data-i18n="qcShowQuoteGlyph">Comilla decorativa</span>
               </label>
               <label id="quoteCardIncludeNoteRow" class="hidden qc-check-item">
                 <input type="checkbox" id="toggleQuoteCardNote" class="sr-only" checked="">
-                <span class="qc-check-box">✓</span>
+                <span class="qc-check-mark">✓</span>
                 <span data-i18n="includePersonalNote">Incluir nota personal</span>
               </label>
             </div>
           </div>
+
+          <!-- SUBVISTA: SELECTOR DE FUENTE -->
+          <div id="qcPanelFontSub" class="hidden space-y-2.5">
+            <div class="qc-subview-header">
+              <button type="button" id="btnQcBackFromFont" class="qc-back-btn" aria-label="Volver">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2.1" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M15 6l-6 6 6 6"></path></svg>
+              </button>
+              <span class="text-xs font-semibold" data-i18n="qcFontLabel">Fuente</span>
+            </div>
+            <div class="grid grid-cols-3 gap-2" id="qcFontPicker">
+              <button type="button" class="qc-font-btn qc-font-grid-btn" data-font="literata" style="font-family:'Literata',serif;">Literata</button>
+              <button type="button" class="qc-font-btn qc-font-grid-btn" data-font="lora" style="font-family:'Lora',serif;">Lora</button>
+              <button type="button" class="qc-font-btn qc-font-grid-btn" data-font="georgia" style="font-family:'Georgia',serif;">Georgia</button>
+              <button type="button" class="qc-font-btn qc-font-grid-btn" data-font="playfair" style="font-family:'Playfair Display',serif;">Playfair</button>
+              <button type="button" class="qc-font-btn qc-font-grid-btn" data-font="inter" style="font-family:'Inter',sans-serif;">Inter</button>
+              <button type="button" class="qc-font-btn qc-font-grid-btn" data-font="jakarta" style="font-family:'Plus Jakarta Sans',sans-serif;">Jakarta</button>
+            </div>
+          </div>
         </div>
 
-        <div class="grid grid-cols-2 gap-2.5 pt-1 flex-shrink-0">
-          <button type="button" id="btnDownloadQuoteCard" class="qc-flat-action py-2.5 px-3 text-xs font-semibold flex items-center justify-center gap-1.5 active:scale-95">
-            <svg class="w-4 h-4 opacity-75" fill="none" stroke="currentColor" stroke-width="1.95" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M12 3.75v11.5m0 0l-4-4m4 4l4-4M4.5 15.75v2.25a2.25 2.25 0 002.25 2.25h10.5a2.25 2.25 0 002.25-2.25v-2.25"></path></svg>
+        <div id="qcHighlightHelpPopover" class="qc-help-popover hidden" role="tooltip">
+          <div class="qc-help-popover-title" data-i18n="qcHighlightHelpTitle">Conservar resaltados originales</div>
+          <p class="qc-help-popover-desc" data-i18n="qcHighlightHelpText">Si el fragmento seleccionado ya tenía palabras resaltadas en el libro, mantenlo activo para conservarlas o desactívalo para compartir el texto limpio. No crea ni edita resaltados.</p>
+        </div>
+
+        <div class="grid grid-cols-2 gap-2.5 pt-2.5 border-t flex-shrink-0" style="border-color: var(--app-border);">
+          <button type="button" id="btnDownloadQuoteCard" class="qc-action-btn-secondary active:scale-95">
+            <svg class="w-4 h-4 opacity-80" fill="none" stroke="currentColor" stroke-width="1.95" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M12 3.75v11.5m0 0l-4-4m4 4l4-4M4.5 15.75v2.25a2.25 2.25 0 002.25 2.25h10.5a2.25 2.25 0 002.25-2.25v-2.25"></path></svg>
             <span data-i18n="savePngBtn">Guardar PNG</span>
           </button>
-          <button type="button" id="btnShareQuoteCard" class="py-2.5 px-3 rounded-xl text-xs font-semibold text-white flex items-center justify-center gap-1.5 shadow-md active:scale-95 transition" style="background-color: var(--app-accent);">
+          <button type="button" id="btnShareQuoteCard" class="qc-action-btn-primary active:scale-95">
             <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="1.95" viewBox="0 0 24 24"><circle cx="17.5" cy="5.75" r="2.65"></circle><circle cx="6.25" cy="12" r="2.65"></circle><circle cx="17.5" cy="18.25" r="2.65"></circle><path stroke-linecap="round" stroke-linejoin="round" d="M8.6 10.7l6.5-3.65M8.6 13.3l6.5 3.65"></path></svg>
             <span data-i18n="shareBtn">Compartir</span>
           </button>
@@ -4526,14 +4863,20 @@ https://github.com/nodeca/pako/blob/main/LICENSE
         qcImageBtn: "Imagen",
         qcCustomBgActive: "Imagen de fondo activa",
         qcClearBgImg: "Quitar",
+        qcThemeRowLabel: "Tema",
+        qcThemeSubTitle: "Apariencia de tarjeta",
+        qcCustomColorBtn: "Color tarjeta",
+        qcResetThemeColor: "Restaurar color del tema de lectura",
+        qcFontLabel: "Fuente",
+        qcAlignLabel: "Alineación",
         qcHighlightStyleLabel: "Resaltado",
-        qcHlOriginal: "Original",
-        qcHlBar: "Barra",
-        qcHlNone: "Limpio",
-        qcOriginalColorTitle: "Color original",
+        qcHighlightHelpBtnTitle: "¿Cómo funciona?",
+        qcHighlightHelpTitle: "Conservar resaltados originales",
+        qcHighlightHelpText: "Si el fragmento seleccionado ya tenía palabras resaltadas en el libro, mantenlo activo para conservarlas o desactívalo para compartir el texto limpio. No crea ni edita resaltados.",
         qcAspectLabel: "Proporción",
         qcTextSizeLabel: "Tamaño",
         qcAlignCenter: "Centro",
+        qcAlignRight: "Derecha",
         qcShowContext: "Contexto libro",
         qcShowBookMeta: "Libro y capítulo",
         qcShowQuoteGlyph: "Comilla decorativa",
@@ -4729,14 +5072,20 @@ https://github.com/nodeca/pako/blob/main/LICENSE
         qcImageBtn: "Image",
         qcCustomBgActive: "Custom backdrop image active",
         qcClearBgImg: "Remove",
+        qcThemeRowLabel: "Theme",
+        qcThemeSubTitle: "Card appearance",
+        qcCustomColorBtn: "Card color",
+        qcResetThemeColor: "Reset to reading theme color",
+        qcFontLabel: "Font",
+        qcAlignLabel: "Align",
         qcHighlightStyleLabel: "Highlight",
-        qcHlOriginal: "Original",
-        qcHlBar: "Bar",
-        qcHlNone: "Clean",
-        qcOriginalColorTitle: "Original color",
+        qcHighlightHelpBtnTitle: "How does it work?",
+        qcHighlightHelpTitle: "Keep original highlights",
+        qcHighlightHelpText: "If the selected passage already has highlights in the book, keep this on to preserve them or turn it off to share clean text. Does not create or edit highlights.",
         qcAspectLabel: "Aspect ratio",
         qcTextSizeLabel: "Size",
         qcAlignCenter: "Center",
+        qcAlignRight: "Right",
         qcShowContext: "Book context",
         qcShowBookMeta: "Book & chapter",
         qcShowQuoteGlyph: "Opening quote",
@@ -11664,11 +12013,27 @@ https://github.com/nodeca/pako/blob/main/LICENSE
     safeOn("btnToolShareCard", "click", (e) => {
       e.stopPropagation();
       if (!currentBook || !selectedQuoteText) return;
+      const domHighlightIds = [];
+      try {
+        const sel = window.getSelection();
+        if (sel && sel.rangeCount > 0) {
+          const range = sel.getRangeAt(0);
+          document.querySelectorAll("#readerContent span[data-hl-id]:not(.hl-note-indicator)").forEach(sp => {
+            try {
+              if (range.intersectsNode(sp)) {
+                const hlId = sp.getAttribute("data-hl-id");
+                if (hlId && !domHighlightIds.includes(hlId)) domHighlightIds.push(hlId);
+              }
+            } catch (err) {}
+          });
+        }
+      } catch (err) {}
       const chapters = Array.isArray(currentBook.chapters) ? currentBook.chapters : [];
       const curCh = chapters[currentBook.currentChapter] || {};
       const tempHl = {
         id: null,
         isSelectionOnly: true,
+        domHighlightIds,
         chapterIndex: currentBook.currentChapter,
         chapterTitle: curCh.title || "",
         text: selectedQuoteText,
@@ -13188,7 +13553,7 @@ https://github.com/nodeca/pako/blob/main/LICENSE
       style: "theme",
       customCardColor: null,
       customBgImg: null,
-      highlightStyle: "original",
+      keepHighlight: true,
       aspectRatio: "1:1",
       fontPreset: "literata",
       textSize: "md",
@@ -13210,6 +13575,15 @@ https://github.com/nodeca/pako/blob/main/LICENSE
       accent: readerConfig.accentColor || appConfig.accent || "#9D4EDD"
     };
 
+    function getQuoteCardFontLabel(preset) {
+      if (preset === "lora") return "Lora";
+      if (preset === "georgia") return "Georgia";
+      if (preset === "playfair") return "Playfair Display";
+      if (preset === "inter") return "Inter";
+      if (preset === "jakarta") return "Plus Jakarta Sans";
+      return "Literata";
+    }
+
     function getQuoteCardFontFamily(preset) {
       if (preset === "lora") return "'Lora', Georgia, serif";
       if (preset === "georgia") return "'Georgia', serif";
@@ -13219,10 +13593,21 @@ https://github.com/nodeca/pako/blob/main/LICENSE
       return "'Literata', Georgia, serif";
     }
 
+    const quoteChapterParasCache = new WeakMap();
+    let quoteCardBackdropCache = { key: "", canvas: null };
+
     function extractChapterParagraphs(book, chIndex) {
       if (!book || !Array.isArray(book.chapters) || !book.chapters[chIndex]) return [];
       const ch = book.chapters[chIndex];
-      const cleaned = cleanChapterHtml(ch.html || "", ch.title || "", ch);
+      const rawHtml = ch.html || "";
+      const chTitle = ch.title || "";
+      const shouldOverride = readerConfig.overrideAuthorStyles !== false;
+      const cached = quoteChapterParasCache.get(ch);
+      if (cached && cached.len === rawHtml.length && cached.title === chTitle && cached.override === shouldOverride) {
+        return cached.blocks;
+      }
+
+      const cleaned = cleanChapterHtml(rawHtml, chTitle, ch);
       const temp = document.createElement("div");
       temp.innerHTML = cleaned;
       temp.querySelectorAll(".hl-note-indicator, .reader-chapter-title, script, style").forEach(el => el.remove());
@@ -13243,6 +13628,7 @@ https://github.com/nodeca/pako/blob/main/LICENSE
           });
         }
       }
+      quoteChapterParasCache.set(ch, { len: rawHtml.length, title: chTitle, override: shouldOverride, blocks });
       return blocks;
     }
 
@@ -13279,13 +13665,15 @@ https://github.com/nodeca/pako/blob/main/LICENSE
       return recovered.length > 0 ? recovered : [rawText];
     }
 
-    function buildParagraphHighlightSegments(paraText, chapterHls, activeHlId) {
+    function buildParagraphHighlightSegments(paraText, chapterHls, activeHlId, domMatchedIds = null) {
       const matches = [];
       const lowerPara = paraText;
+      const domIdSet = Array.isArray(domMatchedIds) && domMatchedIds.length > 0 ? new Set(domMatchedIds) : null;
       (chapterHls || []).forEach(item => {
         const parts = restoreQuoteParagraphsFromChapter(item, activeQuoteCardState.book);
         const useColor = item.color || "#9BC48B";
         const useStyle = item.style || "rounded";
+        const isDomMatched = Boolean(domIdSet && item.id && domIdSet.has(item.id));
         parts.forEach(part => {
           const needle = part.replace(/\s+/g, " ").trim();
           if (needle.length < 2) return;
@@ -13294,6 +13682,25 @@ https://github.com/nodeca/pako/blob/main/LICENSE
             matches.push({ start: idx, end: idx + needle.length, color: useColor, style: useStyle });
           } else if (needle.includes(paraText) && paraText.length >= 2) {
             matches.push({ start: 0, end: paraText.length, color: useColor, style: useStyle });
+          } else if (isDomMatched && paraText.length >= 2) {
+            // Solapamiento parcial confirmado en el DOM entre la selección y un resaltado
+            let matchedPartial = false;
+            const maxOv = Math.min(paraText.length, needle.length);
+            for (let len = maxOv; len >= 3; len--) {
+              if (paraText.startsWith(needle.slice(needle.length - len))) {
+                matches.push({ start: 0, end: len, color: useColor, style: useStyle });
+                matchedPartial = true;
+                break;
+              }
+              if (paraText.endsWith(needle.slice(0, len))) {
+                matches.push({ start: paraText.length - len, end: paraText.length, color: useColor, style: useStyle });
+                matchedPartial = true;
+                break;
+              }
+            }
+            if (!matchedPartial && parts.length === 1) {
+              matches.push({ start: 0, end: paraText.length, color: useColor, style: useStyle });
+            }
           }
         });
       });
@@ -13336,7 +13743,7 @@ https://github.com/nodeca/pako/blob/main/LICENSE
 
       if (!includeContext || !book || !Array.isArray(book.chapters)) {
         if (hl && hl.isSelectionOnly) {
-          return recovered.map(pText => buildParagraphHighlightSegments(pText, chapterHls, null));
+          return recovered.map(pText => buildParagraphHighlightSegments(pText, chapterHls, null, hl.domHighlightIds));
         }
         return recovered.map(pText => [{
           text: pText,
@@ -13399,7 +13806,7 @@ https://github.com/nodeca/pako/blob/main/LICENSE
       return models;
     }
 
-    function layoutSegmentLines(ctx, segments, maxWidth) {
+    function tokenizeQuoteSegments(segments) {
       const tokens = [];
       segments.forEach(seg => {
         const parts = String(seg.text || "").split(/(\s+)/);
@@ -13412,6 +13819,13 @@ https://github.com/nodeca/pako/blob/main/LICENSE
           }
         });
       });
+      return tokens;
+    }
+
+    function layoutSegmentLines(ctx, segmentsOrTokens, maxWidth) {
+      const tokens = Array.isArray(segmentsOrTokens) && segmentsOrTokens.length > 0 && typeof segmentsOrTokens[0].isSpace === "boolean"
+        ? segmentsOrTokens
+        : tokenizeQuoteSegments(segmentsOrTokens || []);
 
       const lines = [];
       let curTokens = [];
@@ -13548,32 +13962,48 @@ https://github.com/nodeca/pako/blob/main/LICENSE
       if (activeQuoteCardState.activeTab !== "bg" && activeQuoteCardState.activeTab !== "text") {
         activeQuoteCardState.activeTab = "bg";
       }
-      // Tabs con subrayado minimalista
+      const subView = activeQuoteCardState.subView || null;
+
+      // Tabs en píldora
       document.querySelectorAll(".qc-tab-btn").forEach(btn => {
         const isAct = btn.dataset.qctab === activeQuoteCardState.activeTab;
         btn.classList.toggle("is-active", isAct);
       });
-      document.getElementById("qcPanelBg")?.classList.toggle("hidden", activeQuoteCardState.activeTab !== "bg");
-      document.getElementById("qcPanelText")?.classList.toggle("hidden", activeQuoteCardState.activeTab !== "text");
+      document.getElementById("qcPanelBg")?.classList.toggle("hidden", subView !== null || activeQuoteCardState.activeTab !== "bg");
+      document.getElementById("qcPanelText")?.classList.toggle("hidden", subView !== null || activeQuoteCardState.activeTab !== "text");
+      document.getElementById("qcPanelThemeSub")?.classList.toggle("hidden", subView !== "theme");
+      document.getElementById("qcPanelFontSub")?.classList.toggle("hidden", subView !== "font");
 
-      // Style presets
-      document.querySelectorAll(".quote-card-style-btn").forEach(btn => {
-        const isSel = btn.dataset.style === activeQuoteCardState.style && !activeQuoteCardState.customBgImg;
-        btn.classList.toggle("is-active", isSel);
-      });
+      // Switch Portada
+      const coverToggle = document.getElementById("toggleQuoteCardCover");
+      if (coverToggle) {
+        coverToggle.checked = activeQuoteCardState.style === "cover" && !activeQuoteCardState.customBgImg;
+        syncSwitchTrack(coverToggle);
+      }
 
-      // Dot de color para la tarjeta
+      // Dot de color para la tarjeta (en fila principal y en subvista)
       const pal = getQuoteCardPalette();
       const cardDot = document.getElementById("qcCardPreviewDot");
+      const cardSubDot = document.getElementById("qcCardSubPreviewDot");
       if (cardDot) cardDot.style.backgroundColor = pal.cardBg;
+      if (cardSubDot) cardSubDot.style.backgroundColor = pal.cardBg;
+      document.getElementById("btnQcResetCardTheme")?.classList.toggle("hidden", !activeQuoteCardState.customCardColor);
 
-      // Highlight toggle (Original solo visible si el texto tiene resaltado real)
-      const origBtn = document.getElementById("qcHlOriginalBtn");
-      if (origBtn) origBtn.classList.toggle("hidden", !activeQuoteCardState.hasHighlight);
-      document.querySelectorAll(".qc-hlstyle-btn").forEach(btn => {
-        const isSel = btn.dataset.hlstyle === activeQuoteCardState.highlightStyle;
-        btn.classList.toggle("is-active", isSel);
-      });
+      // Etiqueta fuente actual
+      const curFontLbl = document.getElementById("qcCurrentFontLabel");
+      if (curFontLbl) curFontLbl.textContent = getQuoteCardFontLabel(activeQuoteCardState.fontPreset);
+
+      // Highlight toggle (solo visible si el texto seleccionado tiene resaltado real en el libro)
+      const hlRow = document.getElementById("qcHighlightControlRow");
+      const hlToggle = document.getElementById("toggleQuoteCardHighlight");
+      if (hlRow) hlRow.classList.toggle("hidden", !activeQuoteCardState.hasHighlight);
+      if (hlToggle) {
+        hlToggle.checked = Boolean(activeQuoteCardState.hasHighlight && activeQuoteCardState.keepHighlight);
+        syncSwitchTrack(hlToggle);
+      }
+      if (!activeQuoteCardState.hasHighlight || subView !== null || activeQuoteCardState.activeTab !== "text") {
+        closeQuoteCardHighlightHelp();
+      }
 
       // Aspect ratio, font, size, align
       document.querySelectorAll(".qc-ratio-btn").forEach(btn => {
@@ -13606,6 +14036,7 @@ https://github.com/nodeca/pako/blob/main/LICENSE
       if (activeQuoteCardState.activeTab !== "bg" && activeQuoteCardState.activeTab !== "text") {
         activeQuoteCardState.activeTab = "bg";
       }
+      activeQuoteCardState.subView = null;
       if (activeQuoteCardState.aspectRatio !== "1:1" && activeQuoteCardState.aspectRatio !== "4:5") {
         activeQuoteCardState.aspectRatio = "1:1";
       }
@@ -13614,20 +14045,20 @@ https://github.com/nodeca/pako/blob/main/LICENSE
       activeQuoteCardState.book = book;
       activeQuoteCardState.includeNote = Boolean(hl.note && hl.note.trim());
 
+      const precomputedParaModels = resolveQuoteCardParagraphModels(hl, book, false);
+      activeQuoteCardState.cachedParaModels = precomputedParaModels;
+      activeQuoteCardState.cachedTokenizedParas = precomputedParaModels.map(segs => tokenizeQuoteSegments(segs));
+
       if (hl.isSelectionOnly) {
-        const chapterHls = Array.isArray(book.highlights)
-          ? book.highlights.filter(h => h.chapterIndex === hl.chapterIndex)
-          : [];
-        const recovered = restoreQuoteParagraphsFromChapter(hl, book);
-        const hasSavedHighlightInside = recovered.some(pText =>
-          buildParagraphHighlightSegments(pText, chapterHls, null).some(s => s.highlighted)
-        );
+        const hasSavedHighlightInside = precomputedParaModels.some(segs => segs.some(s => s.highlighted))
+          || (Array.isArray(hl.domHighlightIds) && hl.domHighlightIds.length > 0);
         activeQuoteCardState.hasHighlight = hasSavedHighlightInside;
-        activeQuoteCardState.highlightStyle = hasSavedHighlightInside ? "original" : "none";
+        activeQuoteCardState.keepHighlight = hasSavedHighlightInside;
       } else {
         activeQuoteCardState.hasHighlight = true;
-        activeQuoteCardState.highlightStyle = "original";
+        activeQuoteCardState.keepHighlight = true;
       }
+      closeQuoteCardHighlightHelp();
 
       const noteRow = document.getElementById("quoteCardIncludeNoteRow");
       const noteToggle = document.getElementById("toggleQuoteCardNote");
@@ -13673,7 +14104,7 @@ https://github.com/nodeca/pako/blob/main/LICENSE
     function renderQuoteCardCanvas() {
       const canvas = document.getElementById("quoteCardCanvas");
       const {
-        highlight, book, style, highlightStyle,
+        highlight, book, style, keepHighlight, hasHighlight,
         aspectRatio, fontPreset, textSize, textAlign,
         includeMeta, includeGlyph, includeNote,
         coverImg, customBgImg
@@ -13686,7 +14117,8 @@ https://github.com/nodeca/pako/blob/main/LICENSE
       const fontFamily = getQuoteCardFontFamily(fontPreset);
       const isDarkCard = getContrastTitleColor(palette.cardBg.startsWith("#") ? palette.cardBg : palette.bgTop) === "#ffffff";
 
-      const paraModels = resolveQuoteCardParagraphModels(highlight, book, false);
+      const paraModels = activeQuoteCardState.cachedParaModels || resolveQuoteCardParagraphModels(highlight, book, false);
+      const tokenizedParas = activeQuoteCardState.cachedTokenizedParas || paraModels.map(segs => tokenizeQuoteSegments(segs));
       let firstHlColor = highlight.color || null;
       if (!firstHlColor) {
         for (const segs of paraModels) {
@@ -13701,8 +14133,7 @@ https://github.com/nodeca/pako/blob/main/LICENSE
       const outerPad = hasBackdropFrame ? 74 : 0;
       const innerPad = hasBackdropFrame ? 64 : 78;
       const cardW = W - outerPad * 2;
-      const barOffset = highlightStyle === "bar" ? 28 : 0;
-      const textMaxW = cardW - innerPad * 2 - barOffset;
+      const textMaxW = cardW - innerPad * 2;
 
       const sizeMult = textSize === "sm" ? 0.86 : (textSize === "lg" ? 1.14 : 1.0);
       const totalChars = paraModels.reduce((sum, segs) => sum + segs.reduce((s, x) => s + x.text.length, 0), 0);
@@ -13722,7 +14153,7 @@ https://github.com/nodeca/pako/blob/main/LICENSE
         const pGap = Math.round(qSize * 0.62);
         ctx.font = `400 ${qSize}px ${fontFamily}`;
 
-        const wrappedParas = paraModels.map(segs => layoutSegmentLines(ctx, segs, textMaxW));
+        const wrappedParas = tokenizedParas.map(toks => layoutSegmentLines(ctx, toks, textMaxW));
         const totalLineCount = wrappedParas.reduce((sum, ls) => sum + ls.length, 0);
         const paraGapsH = Math.max(0, wrappedParas.length - 1) * pGap;
         const quoteBlockH = Math.max(64, totalLineCount * qLineH + paraGapsH);
@@ -13772,58 +14203,73 @@ https://github.com/nodeca/pako/blob/main/LICENSE
       let cardY = 0;
 
       if (hasBackdropFrame) {
-        // 1. Fondo difuminado de portada o imagen subida
-        const bgGrad = ctx.createLinearGradient(0, 0, W, H);
-        bgGrad.addColorStop(0, palette.bgTop);
-        bgGrad.addColorStop(1, palette.bgBottom);
-        ctx.fillStyle = bgGrad;
-        ctx.fillRect(0, 0, W, H);
-
+        // 1. Fondo difuminado de portada o imagen subida (con caché offscreen para render instantáneo)
         const activeBackdropImg = customBgImg || (style === "cover" ? coverImg : null);
-        if (activeBackdropImg && (activeBackdropImg.naturalWidth || activeBackdropImg.width)) {
-          ctx.save();
-          try {
-            const iw = activeBackdropImg.naturalWidth || activeBackdropImg.width;
-            const ih = activeBackdropImg.naturalHeight || activeBackdropImg.height;
-            const scale = Math.max((W + 40) / iw, (H + 40) / ih);
-            const dw = iw * scale;
-            const dh = ih * scale;
-            const dx = (W - dw) / 2, dy = (H - dh) / 2;
-            if (style === "cover" && !customBgImg) {
-              let canFilter = false;
-              if ("filter" in ctx) { ctx.filter = "blur(30px) saturate(1.18)"; canFilter = ctx.filter !== "none"; }
-              if (canFilter) { ctx.drawImage(activeBackdropImg, dx, dy, dw, dh); ctx.filter = "none"; }
-              else {
-                const off = document.createElement("canvas");
-                off.width = Math.max(24, Math.round(W * 0.06)); off.height = Math.max(24, Math.round(H * 0.06));
-                const octx = off.getContext("2d");
-                if (octx) {
-                  octx.imageSmoothingEnabled = true;
-                  octx.imageSmoothingQuality = "high";
-                  octx.drawImage(activeBackdropImg, dx * 0.06, dy * 0.06, dw * 0.06, dh * 0.06);
-                  ctx.imageSmoothingEnabled = true;
-                  ctx.imageSmoothingQuality = "high";
-                  ctx.drawImage(off, 0, 0, off.width, off.height, 0, 0, W, H);
-                }
-                else { ctx.drawImage(activeBackdropImg, dx, dy, dw, dh); }
-              }
-            } else {
-              ctx.drawImage(activeBackdropImg, dx, dy, dw, dh);
-            }
-          } catch (e) {}
-          ctx.restore();
+        const hasLoadedBackdropImg = Boolean(activeBackdropImg && (activeBackdropImg.naturalWidth || activeBackdropImg.width));
+        const backdropSrcKey = customBgImg ? (customBgImg.src || "custom") : (style === "cover" ? (activeQuoteCardState.coverSrc || "cover") : "none");
+        const cacheKey = `${style}|${backdropSrcKey}|${hasLoadedBackdropImg ? 1 : 0}|${palette.bgTop}|${palette.bgBottom}|${W}x${H}`;
+        let cachedBgCanvas = quoteCardBackdropCache.key === cacheKey ? quoteCardBackdropCache.canvas : null;
 
-          const scrim = ctx.createLinearGradient(0, 0, 0, H);
-          if (customBgImg) {
-            scrim.addColorStop(0, "rgba(10, 10, 14, 0.14)");
-            scrim.addColorStop(1, "rgba(10, 10, 14, 0.24)");
-          } else {
-            scrim.addColorStop(0, "rgba(10, 9, 16, 0.52)");
-            scrim.addColorStop(1, "rgba(10, 9, 16, 0.78)");
+        if (!cachedBgCanvas) {
+          cachedBgCanvas = document.createElement("canvas");
+          cachedBgCanvas.width = W;
+          cachedBgCanvas.height = H;
+          const bctx = cachedBgCanvas.getContext("2d");
+          if (bctx) {
+            const bgGrad = bctx.createLinearGradient(0, 0, W, H);
+            bgGrad.addColorStop(0, palette.bgTop);
+            bgGrad.addColorStop(1, palette.bgBottom);
+            bctx.fillStyle = bgGrad;
+            bctx.fillRect(0, 0, W, H);
+
+            if (activeBackdropImg && (activeBackdropImg.naturalWidth || activeBackdropImg.width)) {
+              bctx.save();
+              try {
+                const iw = activeBackdropImg.naturalWidth || activeBackdropImg.width;
+                const ih = activeBackdropImg.naturalHeight || activeBackdropImg.height;
+                const scale = Math.max((W + 40) / iw, (H + 40) / ih);
+                const dw = iw * scale;
+                const dh = ih * scale;
+                const dx = (W - dw) / 2, dy = (H - dh) / 2;
+                if (style === "cover" && !customBgImg) {
+                  let canFilter = false;
+                  if ("filter" in bctx) { bctx.filter = "blur(30px) saturate(1.18)"; canFilter = bctx.filter !== "none"; }
+                  if (canFilter) { bctx.drawImage(activeBackdropImg, dx, dy, dw, dh); bctx.filter = "none"; }
+                  else {
+                    const off = document.createElement("canvas");
+                    off.width = Math.max(24, Math.round(W * 0.06)); off.height = Math.max(24, Math.round(H * 0.06));
+                    const octx = off.getContext("2d");
+                    if (octx) {
+                      octx.imageSmoothingEnabled = true;
+                      octx.imageSmoothingQuality = "high";
+                      octx.drawImage(activeBackdropImg, dx * 0.06, dy * 0.06, dw * 0.06, dh * 0.06);
+                      bctx.imageSmoothingEnabled = true;
+                      bctx.imageSmoothingQuality = "high";
+                      bctx.drawImage(off, 0, 0, off.width, off.height, 0, 0, W, H);
+                    }
+                    else { bctx.drawImage(activeBackdropImg, dx, dy, dw, dh); }
+                  }
+                } else {
+                  bctx.drawImage(activeBackdropImg, dx, dy, dw, dh);
+                }
+              } catch (e) {}
+              bctx.restore();
+
+              const scrim = bctx.createLinearGradient(0, 0, 0, H);
+              if (customBgImg) {
+                scrim.addColorStop(0, "rgba(10, 10, 14, 0.14)");
+                scrim.addColorStop(1, "rgba(10, 10, 14, 0.24)");
+              } else {
+                scrim.addColorStop(0, "rgba(10, 9, 16, 0.52)");
+                scrim.addColorStop(1, "rgba(10, 9, 16, 0.78)");
+              }
+              bctx.fillStyle = scrim;
+              bctx.fillRect(0, 0, W, H);
+            }
           }
-          ctx.fillStyle = scrim;
-          ctx.fillRect(0, 0, W, H);
+          quoteCardBackdropCache = { key: cacheKey, canvas: cachedBgCanvas };
         }
+        ctx.drawImage(cachedBgCanvas, 0, 0);
 
         // 2. Tarjeta flotante central con sombra sutil
         cardY = Math.round((H - cardH) / 2);
@@ -13867,25 +14313,15 @@ https://github.com/nodeca/pako/blob/main/LICENSE
         ctx.fillStyle = accentTone || palette.accent;
         ctx.font = "700 74px Georgia, serif";
         ctx.textBaseline = "top";
-        ctx.textAlign = textAlign === "center" ? "center" : "left";
-        ctx.fillText("“", textAlign === "center" ? (W / 2) : (contentX - 2), cursorY - 12);
+        ctx.textAlign = textAlign === "center" ? "center" : (textAlign === "right" ? "right" : "left");
+        const glyphX = textAlign === "center" ? (W / 2) : (textAlign === "right" ? (contentX + textMaxW + 2) : (contentX - 2));
+        ctx.fillText("“", glyphX, cursorY - 12);
         ctx.textAlign = "left";
         cursorY += layout.glyphH;
       }
 
-      // Barra lateral opcional
-      const quoteAreaTop = cursorY;
-
-      if (highlightStyle === "bar") {
-        ctx.save();
-        traceRoundedRect(contentX, quoteAreaTop + 6, 7, Math.max(14, quoteAreaHeight - 12), 4);
-        ctx.fillStyle = accentTone || palette.accent;
-        ctx.fill();
-        ctx.restore();
-      }
-
       // 3. Párrafos separados + Resaltado original fiel (marcador o subrayado) línea por línea
-      const textStartX = contentX + barOffset;
+      const textStartX = contentX;
       ctx.font = `400 ${layout.qSize}px ${fontFamily}`;
       ctx.textBaseline = "top";
 
@@ -13893,7 +14329,9 @@ https://github.com/nodeca/pako/blob/main/LICENSE
         pLines.forEach((lineObj) => {
           const lineX = textAlign === "center"
             ? textStartX + Math.max(0, (textMaxW - lineObj.width) / 2)
-            : textStartX;
+            : (textAlign === "right"
+              ? textStartX + Math.max(0, textMaxW - lineObj.width)
+              : textStartX);
 
           // Agrupar tokens resaltados contiguos para dibujar bandas continuas por línea
           let curX = lineX;
@@ -13901,7 +14339,7 @@ https://github.com/nodeca/pako/blob/main/LICENSE
           let activeSpan = null;
 
           lineObj.tokens.forEach((tok) => {
-            if (tok.highlighted && highlightStyle === "original" && tok.color) {
+            if (tok.highlighted && hasHighlight && keepHighlight && tok.color) {
               const tokStyle = tok.style || "rounded";
               if (!activeSpan || activeSpan.color !== tok.color || activeSpan.style !== tokStyle) {
                 if (activeSpan) hlSpans.push(activeSpan);
@@ -13962,8 +14400,8 @@ https://github.com/nodeca/pako/blob/main/LICENSE
         cursorY += 22;
         ctx.fillStyle = palette.muted;
         ctx.font = `italic 400 ${layout.noteSize}px 'Inter', system-ui, sans-serif`;
-        ctx.textAlign = textAlign === "center" ? "center" : "left";
-        const noteX = textAlign === "center" ? (W / 2) : contentX;
+        ctx.textAlign = textAlign === "center" ? "center" : (textAlign === "right" ? "right" : "left");
+        const noteX = textAlign === "center" ? (W / 2) : (textAlign === "right" ? (contentX + textMaxW) : contentX);
         layout.noteLines.forEach((line, idx) => {
           ctx.fillText(line, noteX, cursorY + idx * layout.noteLineH);
         });
@@ -14012,10 +14450,29 @@ https://github.com/nodeca/pako/blob/main/LICENSE
       return bytes;
     }
 
-    safeOn("btnCloseQuoteCardModal", "click", () => document.getElementById("quoteCardModal")?.classList.add("hidden"));
+    function closeQuoteCardHighlightHelp() {
+      const pop = document.getElementById("qcHighlightHelpPopover");
+      const btn = document.getElementById("btnQcHighlightHelp");
+      if (pop) pop.classList.add("hidden");
+      if (btn) {
+        btn.classList.remove("is-open");
+        btn.setAttribute("aria-expanded", "false");
+      }
+    }
+
+    safeOn("btnCloseQuoteCardModal", "click", () => {
+      closeQuoteCardHighlightHelp();
+      document.getElementById("quoteCardModal")?.classList.add("hidden");
+    });
     safeOn("quoteCardModal", "click", (e) => {
-      if (e.target && e.target.id === "quoteCardModal") {
+      const target = e.target;
+      if (target && target.id === "quoteCardModal") {
+        closeQuoteCardHighlightHelp();
         document.getElementById("quoteCardModal")?.classList.add("hidden");
+        return;
+      }
+      if (target && !target.closest("#btnQcHighlightHelp") && !target.closest("#qcHighlightHelpPopover")) {
+        closeQuoteCardHighlightHelp();
       }
     });
 
@@ -14023,18 +14480,48 @@ https://github.com/nodeca/pako/blob/main/LICENSE
       btn.addEventListener("click", () => {
         const nextTab = btn.dataset.qctab || "bg";
         activeQuoteCardState.activeTab = nextTab === "text" ? "text" : "bg";
+        activeQuoteCardState.subView = null;
+        closeQuoteCardHighlightHelp();
         syncQuoteCardControlsUI();
       });
     });
 
-    document.querySelectorAll(".quote-card-style-btn").forEach(btn => {
-      btn.addEventListener("click", () => {
-        activeQuoteCardState.style = btn.dataset.style || "theme";
-        activeQuoteCardState.customCardColor = null;
-        activeQuoteCardState.customBgImg = null;
-        syncQuoteCardControlsUI();
-        renderQuoteCardCanvas();
-      });
+    safeOn("btnQcOpenThemeSub", "click", () => {
+      activeQuoteCardState.subView = "theme";
+      closeQuoteCardHighlightHelp();
+      syncQuoteCardControlsUI();
+    });
+
+    safeOn("btnQcBackFromTheme", "click", () => {
+      activeQuoteCardState.subView = null;
+      syncQuoteCardControlsUI();
+    });
+
+    safeOn("btnQcOpenFontSub", "click", () => {
+      activeQuoteCardState.subView = "font";
+      closeQuoteCardHighlightHelp();
+      syncQuoteCardControlsUI();
+    });
+
+    safeOn("btnQcBackFromFont", "click", () => {
+      activeQuoteCardState.subView = null;
+      syncQuoteCardControlsUI();
+    });
+
+    safeOn("toggleQuoteCardCover", "change", (e) => {
+      const useCover = Boolean(e.target.checked);
+      activeQuoteCardState.style = useCover ? "cover" : "theme";
+      activeQuoteCardState.customBgImg = null;
+      if (useCover) activeQuoteCardState.customCardColor = null;
+      syncSwitchTrack(e.target);
+      syncQuoteCardControlsUI();
+      renderQuoteCardCanvas();
+    });
+
+    safeOn("btnQcResetCardTheme", "click", () => {
+      activeQuoteCardState.customCardColor = null;
+      syncQuoteCardControlsUI();
+      renderQuoteCardCanvas();
     });
 
     safeOn("btnQcCustomCard", "click", () => {
@@ -14070,12 +14557,28 @@ https://github.com/nodeca/pako/blob/main/LICENSE
       renderQuoteCardCanvas();
     });
 
-    document.querySelectorAll(".qc-hlstyle-btn").forEach(btn => {
-      btn.addEventListener("click", () => {
-        activeQuoteCardState.highlightStyle = btn.dataset.hlstyle || (activeQuoteCardState.hasHighlight ? "original" : "none");
-        syncQuoteCardControlsUI();
-        renderQuoteCardCanvas();
-      });
+    safeOn("toggleQuoteCardHighlight", "change", (e) => {
+      activeQuoteCardState.keepHighlight = Boolean(e.target.checked);
+      syncSwitchTrack(e.target);
+      renderQuoteCardCanvas();
+    });
+
+    safeOn("btnQcHighlightHelp", "click", (e) => {
+      e.stopPropagation();
+      const pop = document.getElementById("qcHighlightHelpPopover");
+      const btn = document.getElementById("btnQcHighlightHelp");
+      const modalCard = document.getElementById("quoteCardModalCard");
+      if (!pop || !btn) return;
+      const willOpen = pop.classList.contains("hidden");
+      if (willOpen && modalCard) {
+        const cardRect = modalCard.getBoundingClientRect();
+        const btnRect = btn.getBoundingClientRect();
+        const bottomOffset = Math.max(68, Math.round(cardRect.bottom - btnRect.top + 8));
+        pop.style.bottom = `${bottomOffset}px`;
+      }
+      pop.classList.toggle("hidden", !willOpen);
+      btn.classList.toggle("is-open", willOpen);
+      btn.setAttribute("aria-expanded", willOpen ? "true" : "false");
     });
 
     document.querySelectorAll(".qc-ratio-btn").forEach(btn => {
