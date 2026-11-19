@@ -3362,73 +3362,119 @@ https://github.com/nodeca/pako/blob/main/LICENSE
           <svg id="iconChevronAdvanced" class="w-3.5 h-3.5 opacity-45 transition-transform flex-shrink-0" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M8.25 4.5l7.5 7.5-7.5 7.5"></path></svg>
         </button>
 
-        <div id="readestAdvancedContent" class="hidden px-3 py-2.5 space-y-2.5 text-[11px] rounded-2xl mt-1.5 border" style="background-color: var(--app-bg); border-color: var(--app-border);">
-          <div class="flex items-center justify-between">
-            <span class="opacity-75 font-medium" data-i18n="storageLabel">Memoria IndexedDB</span>
-            <span id="readestStorageCount" class="font-mono opacity-65">0 libros</span>
-          </div>
-
-          <div class="space-y-1.5">
-            <button type="button" id="btnExportFullBackupJson" class="w-full py-1.5 px-2.5 rounded-xl border active:scale-95 transition font-semibold flex items-center justify-center gap-1.5" style="background-color: var(--app-surface); border-color: var(--app-accent); color: var(--app-text);">
-              <svg class="w-3.5 h-3.5 opacity-85 flex-shrink-0" fill="none" stroke="currentColor" stroke-width="1.95" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" d="M12 15.25V3.75m0 0l-4 4m4-4l4 4M4.5 15.75v2.25a2.25 2.25 0 002.25 2.25h10.5a2.25 2.25 0 002.25-2.25v-2.25"></path>
-              </svg>
-              <span class="truncate" data-i18n="exportFullBackup">Copia completa (.zip)</span>
+        <div id="readestAdvancedContent" class="hidden px-2 py-2 space-y-1.5 text-[11px] rounded-2xl mt-1.5 border" style="background-color: var(--app-bg); border-color: var(--app-border);">
+          <!-- Subsección > 1: Respaldo y datos -->
+          <div>
+            <button type="button" id="btnToggleAdvBackupSection" aria-expanded="false" class="settings-menu-row w-full flex items-center justify-between gap-2 px-2 py-1.5 rounded-xl text-left">
+              <div class="flex items-center gap-2 min-w-0">
+                <svg class="w-3.5 h-3.5 opacity-75 flex-shrink-0" fill="none" stroke="currentColor" stroke-width="1.95" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M20.25 6.375c0 2.278-3.694 4.125-8.25 4.125S3.75 8.653 3.75 6.375m16.5 0c0-2.278-3.694-4.125-8.25-4.125S3.75 4.097 3.75 6.375m16.5 0v11.25c0 2.278-3.694 4.125-8.25 4.125s-8.25-1.847-8.25-4.125V6.375m16.5 5.625c0 2.278-3.694 4.125-8.25 4.125s-8.25-1.847-8.25-4.125"></path>
+                </svg>
+                <span class="font-medium truncate" data-i18n="backupSectionLabel">Respaldo y datos</span>
+              </div>
+              <div class="flex items-center gap-1.5 flex-shrink-0">
+                <span id="readestStorageCount" class="font-mono text-[10px] opacity-55">0 libros</span>
+                <svg id="iconChevronAdvBackup" class="w-3 h-3 opacity-45 transition-transform" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M8.25 4.5l7.5 7.5-7.5 7.5"></path></svg>
+              </div>
             </button>
 
-            <div class="grid grid-cols-2 gap-1.5">
-              <button type="button" id="btnExportBackupJson" class="py-1.5 px-2 rounded-xl border active:scale-95 transition font-semibold flex items-center justify-center gap-1.5" style="background-color: var(--app-surface); border-color: var(--app-border); color: var(--app-text);">
-                <svg class="w-3.5 h-3.5 opacity-80 flex-shrink-0" fill="none" stroke="currentColor" stroke-width="1.95" viewBox="0 0 24 24">
+            <div id="advBackupSectionBody" class="hidden px-1.5 pt-1.5 pb-1 space-y-1.5">
+              <button type="button" id="btnExportFullBackupJson" class="w-full py-1.5 px-2.5 rounded-xl border active:scale-95 transition font-semibold flex items-center justify-center gap-1.5" style="background-color: var(--app-surface); border-color: var(--app-accent); color: var(--app-text);">
+                <svg class="w-3.5 h-3.5 opacity-85 flex-shrink-0" fill="none" stroke="currentColor" stroke-width="1.95" viewBox="0 0 24 24">
                   <path stroke-linecap="round" stroke-linejoin="round" d="M12 15.25V3.75m0 0l-4 4m4-4l4 4M4.5 15.75v2.25a2.25 2.25 0 002.25 2.25h10.5a2.25 2.25 0 002.25-2.25v-2.25"></path>
                 </svg>
-                <span class="truncate" data-i18n="exportBackup">Solo lectura</span>
+                <span class="truncate" data-i18n="exportFullBackup">Copia completa (.json)</span>
               </button>
 
-              <button type="button" id="btnImportBackupJson" class="py-1.5 px-2 rounded-xl border active:scale-95 transition font-semibold flex items-center justify-center gap-1.5" style="background-color: var(--app-surface); border-color: var(--app-border); color: var(--app-text);">
-                <svg class="w-3.5 h-3.5 opacity-80 flex-shrink-0" fill="none" stroke="currentColor" stroke-width="1.95" viewBox="0 0 24 24">
-                  <path stroke-linecap="round" stroke-linejoin="round" d="M12 3.75v11.5m0 0l-4-4m4 4l4-4M4.5 15.75v2.25a2.25 2.25 0 002.25 2.25h10.5a2.25 2.25 0 002.25-2.25v-2.25"></path>
+              <div class="grid grid-cols-2 gap-1.5">
+                <button type="button" id="btnExportBackupJson" class="py-1.5 px-2 rounded-xl border active:scale-95 transition font-semibold flex items-center justify-center gap-1.5" style="background-color: var(--app-surface); border-color: var(--app-border); color: var(--app-text);">
+                  <svg class="w-3.5 h-3.5 opacity-80 flex-shrink-0" fill="none" stroke="currentColor" stroke-width="1.95" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M12 15.25V3.75m0 0l-4 4m4-4l4 4M4.5 15.75v2.25a2.25 2.25 0 002.25 2.25h10.5a2.25 2.25 0 002.25-2.25v-2.25"></path>
+                  </svg>
+                  <span class="truncate" data-i18n="exportBackup">Solo lectura</span>
+                </button>
+
+                <button type="button" id="btnImportBackupJson" class="py-1.5 px-2 rounded-xl border active:scale-95 transition font-semibold flex items-center justify-center gap-1.5" style="background-color: var(--app-surface); border-color: var(--app-border); color: var(--app-text);">
+                  <svg class="w-3.5 h-3.5 opacity-80 flex-shrink-0" fill="none" stroke="currentColor" stroke-width="1.95" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M12 3.75v11.5m0 0l-4-4m4 4l4-4M4.5 15.75v2.25a2.25 2.25 0 002.25 2.25h10.5a2.25 2.25 0 002.25-2.25v-2.25"></path>
+                  </svg>
+                  <span class="truncate" data-i18n="importBackup">Importar .json</span>
+                </button>
+              </div>
+              <p class="text-[10px] opacity-55 leading-snug" data-i18n="backupHint">La copia completa incluye libros, capítulos e imágenes. «Solo lectura» guarda progreso, citas, notas y ajustes.</p>
+            </div>
+          </div>
+
+          <!-- Subsección > 2: Aplicación offline -->
+          <div>
+            <button type="button" id="btnToggleAdvAppSection" aria-expanded="false" class="settings-menu-row w-full flex items-center justify-between gap-2 px-2 py-1.5 rounded-xl text-left">
+              <div class="flex items-center gap-2 min-w-0">
+                <svg class="w-3.5 h-3.5 opacity-75 flex-shrink-0" fill="none" stroke="currentColor" stroke-width="1.95" viewBox="0 0 24 24">
+                  <circle cx="12" cy="12" r="9"></circle>
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M12 8v7.5m0 0l-3.25-3.25M12 15.5l3.25-3.25"></path>
                 </svg>
-                <span class="truncate" data-i18n="importBackup">Importar (.zip / .json)</span>
+                <span class="font-medium truncate" data-i18n="appSectionLabel">Aplicación</span>
+              </div>
+              <div class="flex items-center gap-1.5 flex-shrink-0">
+                <span class="text-[10px] opacity-55">HTML · PWA</span>
+                <svg id="iconChevronAdvApp" class="w-3 h-3 opacity-45 transition-transform" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M8.25 4.5l7.5 7.5-7.5 7.5"></path></svg>
+              </div>
+            </button>
+
+            <div id="advAppSectionBody" class="hidden px-1.5 pt-1.5 pb-1 space-y-1.5">
+              <button type="button" id="btnInstallPwaApp" class="hidden w-full py-1.5 px-2.5 rounded-xl border active:scale-95 transition font-semibold flex items-center justify-center gap-1.5" style="background-color: var(--app-accent); border-color: var(--app-accent); color: #ffffff;">
+                <svg class="w-3.5 h-3.5 flex-shrink-0" fill="none" stroke="currentColor" stroke-width="1.95" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M10.5 1.5H8.25A2.25 2.25 0 006 3.75v16.5a2.25 2.25 0 002.25 2.25h7.5A2.25 2.25 0 0018 20.25V3.75a2.25 2.25 0 00-2.25-2.25H13.5m-3 0V3h3V1.5m-3 0h3m-3 18.75h3"></path>
+                </svg>
+                <span class="truncate" data-i18n="installPwaBtn">Instalar como App (PWA)</span>
               </button>
+
+              <a id="btnDownloadStandaloneApp" href="/__download/Nyxen_EPUB_Reader.html" download="Nyxen_EPUB_Reader.html" role="button" class="w-full py-1.5 px-2.5 rounded-xl border active:scale-95 transition font-semibold flex items-center justify-center gap-1.5 cursor-pointer" style="background-color: var(--app-surface); border-color: var(--app-border); color: var(--app-text); text-decoration: none;">
+                <svg class="w-3.5 h-3.5 opacity-80 flex-shrink-0" fill="none" stroke="currentColor" stroke-width="1.95" viewBox="0 0 24 24">
+                  <circle cx="12" cy="12" r="9"></circle>
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M12 8v7.5m0 0l-3.25-3.25M12 15.5l3.25-3.25"></path>
+                </svg>
+                <span class="truncate" data-i18n="downloadAppBtn">Descargar app (.html)</span>
+              </a>
+              <p class="text-[10px] opacity-55 leading-snug" data-i18n="standaloneAppHint">Descarga un archivo HTML único para abrir la app sin conexión.</p>
             </div>
-            <p class="text-[10px] opacity-55 leading-snug" data-i18n="backupHint">La copia completa (.zip) incluye libros, capítulos e imágenes con verificación SHA-256. «Solo lectura» guarda progreso, citas, notas y ajustes.</p>
           </div>
 
-          <button type="button" id="btnInstallPwaApp" class="hidden w-full py-1.5 px-2.5 rounded-xl border active:scale-95 transition font-semibold flex items-center justify-center gap-1.5" style="background-color: var(--app-accent); border-color: var(--app-accent); color: #ffffff;">
-            <svg class="w-3.5 h-3.5 flex-shrink-0" fill="none" stroke="currentColor" stroke-width="1.95" viewBox="0 0 24 24">
-              <path stroke-linecap="round" stroke-linejoin="round" d="M10.5 1.5H8.25A2.25 2.25 0 006 3.75v16.5a2.25 2.25 0 002.25 2.25h7.5A2.25 2.25 0 0018 20.25V3.75a2.25 2.25 0 00-2.25-2.25H13.5m-3 0V3h3V1.5m-3 0h3m-3 18.75h3"></path>
-            </svg>
-            <span class="truncate" data-i18n="installPwaBtn">Instalar como App (PWA)</span>
-          </button>
+          <!-- Subsección > 3: Diccionario Offline -->
+          <div>
+            <button type="button" id="btnToggleAdvDictSection" aria-expanded="false" class="settings-menu-row w-full flex items-center justify-between gap-2 px-2 py-1.5 rounded-xl text-left">
+              <div class="flex items-center gap-2 min-w-0">
+                <svg class="w-3.5 h-3.5 opacity-75 flex-shrink-0" fill="none" stroke="currentColor" stroke-width="1.95" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M12 6.042A8.967 8.967 0 006 3.75c-1.052 0-2.062.18-3 .512v14.25A8.987 8.987 0 016 18c2.305 0 4.408.867 6 2.292m0-14.25a8.966 8.966 0 016-2.292c1.052 0 2.062.18 3 .512v14.25A8.987 8.987 0 0018 18a8.967 8.967 0 00-6 2.292m0-14.25v14.25"></path>
+                </svg>
+                <span class="font-medium truncate" data-i18n="offlineDictLabel">Diccionario Offline</span>
+              </div>
+              <div class="flex items-center gap-1.5 flex-shrink-0">
+                <span id="offlineDictStatus" class="text-[10px] opacity-55">Solo caché</span>
+                <svg id="iconChevronAdvDict" class="w-3 h-3 opacity-45 transition-transform" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M8.25 4.5l7.5 7.5-7.5 7.5"></path></svg>
+              </div>
+            </button>
 
-          <button type="button" id="btnDownloadStandaloneApp" class="w-full py-1.5 px-2.5 rounded-xl border active:scale-95 transition font-semibold flex items-center justify-center gap-1.5" style="background-color: var(--app-surface); border-color: var(--app-border); color: var(--app-text);">
-            <svg class="w-3.5 h-3.5 opacity-80 flex-shrink-0" fill="none" stroke="currentColor" stroke-width="1.95" viewBox="0 0 24 24">
-              <circle cx="12" cy="12" r="9"></circle>
-              <path stroke-linecap="round" stroke-linejoin="round" d="M12 8v7.5m0 0l-3.25-3.25M12 15.5l3.25-3.25"></path>
-            </svg>
-            <span class="truncate" data-i18n="downloadAppBtn">Descargar app (.html)</span>
-          </button>
-
-          <div class="pt-1 border-t space-y-1.5" style="border-color: var(--app-border);">
-            <div class="flex items-center justify-between">
-              <span class="opacity-75 font-medium" data-i18n="offlineDictLabel">Diccionario Offline</span>
-              <span id="offlineDictStatus" class="text-[10px] opacity-55">Solo caché</span>
+            <div id="advDictSectionBody" class="hidden px-1.5 pt-1.5 pb-1 space-y-1.5">
+              <div class="grid grid-cols-2 gap-1.5">
+                <button type="button" id="btnOfflineDictEn" class="py-1.5 px-2 rounded-xl border active:scale-95 transition font-semibold flex items-center justify-center gap-1" style="background-color: var(--app-surface); border-color: var(--app-border); color: var(--app-text);">
+                  <span id="offlineDictEnText" class="truncate">EN · Descargar</span>
+                </button>
+                <button type="button" id="btnOfflineDictEs" class="py-1.5 px-2 rounded-xl border active:scale-95 transition font-semibold flex items-center justify-center gap-1" style="background-color: var(--app-surface); border-color: var(--app-border); color: var(--app-text);">
+                  <span id="offlineDictEsText" class="truncate">ES · Descargar</span>
+                </button>
+              </div>
+              <p id="offlineDictHint" class="text-[10px] opacity-55 leading-snug" data-i18n="offlineDictHint">Descarga paquetes locales (~300 palabras base + caché) para consultar sin red.</p>
             </div>
-            <div class="grid grid-cols-2 gap-1.5">
-              <button type="button" id="btnOfflineDictEn" class="py-1.5 px-2 rounded-xl border active:scale-95 transition font-semibold flex items-center justify-center gap-1" style="background-color: var(--app-surface); border-color: var(--app-border); color: var(--app-text);">
-                <span id="offlineDictEnText" class="truncate">EN · Descargar</span>
-              </button>
-              <button type="button" id="btnOfflineDictEs" class="py-1.5 px-2 rounded-xl border active:scale-95 transition font-semibold flex items-center justify-center gap-1" style="background-color: var(--app-surface); border-color: var(--app-border); color: var(--app-text);">
-                <span id="offlineDictEsText" class="truncate">ES · Descargar</span>
-              </button>
-            </div>
-            <p id="offlineDictHint" class="text-[10px] opacity-55 leading-snug" data-i18n="offlineDictHint">Descarga paquetes locales (~300 palabras base + caché) para consultar sin red.</p>
           </div>
 
-          <button type="button" id="btnReadestClearLibrary" class="w-full py-1.5 px-2.5 rounded-xl text-red-400 bg-red-500/5 hover:bg-red-500/15 active:scale-98 transition text-left font-semibold flex items-center gap-1.5">
-            <svg class="w-3.5 h-3.5 flex-shrink-0" fill="none" stroke="currentColor" stroke-width="1.95" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M4.5 6.75h15M9.25 6.75V5.25a2 2 0 012-2h1.5a2 2 0 012 2v1.5m-8.25 0l.9 11.75a2.5 2.5 0 002.5 2.25h4.2a2.5 2.5 0 002.5-2.25l.9-11.75M10 11v5.25M14 11v5.25"></path></svg>
-            <span data-i18n="clearLibrary">Vaciar biblioteca</span>
-          </button>
+          <!-- Acción destructiva -->
+          <div class="pt-1.5 border-t" style="border-color: var(--app-border);">
+            <button type="button" id="btnReadestClearLibrary" class="w-full py-1.5 px-2.5 rounded-xl text-red-400 bg-red-500/5 hover:bg-red-500/15 active:scale-98 transition text-left font-semibold flex items-center gap-1.5">
+              <svg class="w-3.5 h-3.5 flex-shrink-0" fill="none" stroke="currentColor" stroke-width="1.95" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M4.5 6.75h15M9.25 6.75V5.25a2 2 0 012-2h1.5a2 2 0 012 2v1.5m-8.25 0l.9 11.75a2.5 2.5 0 002.5 2.25h4.2a2.5 2.5 0 002.5-2.25l.9-11.75M10 11v5.25M14 11v5.25"></path></svg>
+              <span data-i18n="clearLibrary">Vaciar biblioteca</span>
+            </button>
+          </div>
         </div>
       </div>
 
@@ -4911,8 +4957,12 @@ https://github.com/nodeca/pako/blob/main/LICENSE
   </div>
 
   <!-- ========================================== -->
-  <!-- JAVASCRIPT: LÓGICA Y CONTROL COMPLETO      -->
+  <!-- JAVASCRIPT: MÓDULOS Y LÓGICA COMPLETA      -->
   <!-- ========================================== -->
+  <script src="./modules/storage.js" data-nyxen-module="storage"></script>
+  <script src="./modules/sanitizer.js" data-nyxen-module="sanitizer"></script>
+  <script src="./modules/epub-zip.js" data-nyxen-module="epub-zip"></script>
+  <script src="./modules/epub-parser.js" data-nyxen-module="epub-parser"></script>
   <script>
     // Helper seguro de asignación de eventos (garantiza cero errores por elementos faltantes)
     function safeOn(idOrEl, event, handler) {
@@ -5078,10 +5128,13 @@ https://github.com/nodeca/pako/blob/main/LICENSE
         filterAnnotationsTitle: "Filtrar anotaciones",
         highlightsTabTitle: "Citas y Notas",
         bookmarksTabTitle: "Capítulos favoritos",
+        backupSectionLabel: "Respaldo y datos",
         exportFullBackup: "Copia completa (.json)",
         exportBackup: "Solo lectura",
         importBackup: "Importar .json",
         backupHint: "La copia completa incluye libros, capítulos e imágenes. «Solo lectura» guarda progreso, citas, notas y ajustes.",
+        appSectionLabel: "Aplicación",
+        standaloneAppHint: "Descarga un archivo HTML único para abrir la app sin conexión.",
         tempStorageBanner: "Almacenamiento persistente no disponible (modo temporal): tus libros se perderán al cerrar.",
         tempStorageAction: "Respaldar",
         extMediaBlocked: "Imágenes externas bloqueadas por privacidad.",
@@ -5330,10 +5383,13 @@ https://github.com/nodeca/pako/blob/main/LICENSE
         filterAnnotationsTitle: "Filter annotations",
         highlightsTabTitle: "Quotes & Notes",
         bookmarksTabTitle: "Favorite chapters",
+        backupSectionLabel: "Backup & data",
         exportFullBackup: "Full backup (.json)",
         exportBackup: "Reading only",
         importBackup: "Import .json",
         backupHint: "Full backup includes books, chapters, and images. «Reading only» saves progress, highlights, notes, and settings.",
+        appSectionLabel: "App",
+        standaloneAppHint: "Download a single self-contained HTML file for offline use.",
         tempStorageBanner: "Persistent storage unavailable (temporary mode): books will be lost when closing.",
         tempStorageAction: "Back up",
         extMediaBlocked: "External images blocked for privacy.",
@@ -5587,66 +5643,19 @@ https://github.com/nodeca/pako/blob/main/LICENSE
     });
 
     /* -------------------------------------------------------------
-       2. BASE DE DATOS PARTICIONADA (IndexedDB v11 + Memoria Fail-Safe)
+       2. BASE DE DATOS PARTICIONADA (Módulo NyxenStorage + Puente UI)
     ------------------------------------------------------------- */
-    let db = null;
-    let dbOpeningPromise = null;
-    let dbInitBlocked = false;
-    const DB_NAME = "LuminaAppDB";
-    const DB_VERSION = 11;
-
-    const STORE_KEY_PATHS = {
-      books: "id",
-      bookContents: "bookId",
-      bookAssets: "assetKey",
-      customFonts: "name",
-      settings: "key",
-      themes: "id",
-      swatches: "color",
-      dictPacks: "lang"
-    };
-
-    const inMemoryDb = {
-      books: [],
-      bookContents: [],
-      bookAssets: [],
-      customFonts: [],
-      settings: [],
-      themes: [],
-      swatches: [],
-      dictPacks: []
-    };
-
-    const activeObjectUrls = new Map();
-
-    function revokeBookObjectUrls(bookIdPrefix) {
-      for (const [key, url] of activeObjectUrls.entries()) {
-        if (!bookIdPrefix || key.startsWith(bookIdPrefix)) {
-          try { URL.revokeObjectURL(url); } catch (e) {}
-          activeObjectUrls.delete(key);
-        }
-      }
-    }
-
-    async function requestPersistentStorage() {
-      try {
-        if (navigator.storage && typeof navigator.storage.persist === "function") {
-          const isPersisted = await navigator.storage.persisted();
-          if (!isPersisted) await navigator.storage.persist();
-        }
-      } catch (e) {}
-    }
-
-    function isUsingTempMemoryStorage() {
-      return Boolean(dbInitBlocked || !db);
-    }
+    const DB_NAME = window.NyxenStorage.DB_NAME;
+    const DB_VERSION = window.NyxenStorage.DB_VERSION;
+    const STORE_KEY_PATHS = window.NyxenStorage.STORE_KEY_PATHS;
+    const CHAPTER_CHUNK_SIZE = window.NyxenStorage.CHAPTER_CHUNK_SIZE;
 
     let tempStorageBannerDismissed = false;
 
     function updateTempStorageWarningBanner() {
       const banner = document.getElementById("nyxTempStorageBanner");
       if (!banner) return;
-      const shouldShow = Boolean(dbInitBlocked && !tempStorageBannerDismissed);
+      const shouldShow = Boolean(window.NyxenStorage.raw.isBlocked() && !tempStorageBannerDismissed);
       banner.classList.toggle("hidden", !shouldShow);
     }
 
@@ -5656,1302 +5665,93 @@ https://github.com/nodeca/pako/blob/main/LICENSE
       updateTempStorageWarningBanner();
     });
 
-    function openDatabase() {
-      if (db) return Promise.resolve(db);
-      if (dbOpeningPromise) return dbOpeningPromise;
-      dbOpeningPromise = new Promise((resolve) => {
-        if (!window.indexedDB) {
-          console.warn("IndexedDB no disponible, usando almacenamiento en memoria.");
-          dbInitBlocked = true;
-          updateTempStorageWarningBanner();
-          resolve(null);
-          return;
-        }
-
-        let settled = false;
-        const finish = (val) => {
-          if (settled) return;
-          settled = true;
-          clearTimeout(guardTimer);
-          updateTempStorageWarningBanner();
-          resolve(val);
-        };
-        const guardTimer = setTimeout(() => {
-          console.warn("IndexedDB tardó demasiado en abrir, usando fallback temporal.");
-          dbInitBlocked = true;
-          finish(null);
-        }, 4500);
-
-        try {
-          const req = indexedDB.open(DB_NAME, DB_VERSION);
-          req.onupgradeneeded = (e) => {
-            const d = e.target.result;
-            Object.entries(STORE_KEY_PATHS).forEach(([store, keyPath]) => {
-              if (!d.objectStoreNames.contains(store)) {
-                d.createObjectStore(store, { keyPath });
-              }
-            });
-          };
-          req.onsuccess = () => {
-            db = req.result;
-            dbInitBlocked = false;
-            db.onversionchange = () => { try { db.close(); } catch (e) {} db = null; };
-            db.onclose = () => { db = null; };
-            finish(db);
-          };
-          req.onerror = () => {
-            console.warn("IndexedDB bloqueado por permisos iframe, usando fallback en memoria.");
-            dbInitBlocked = true;
-            finish(null);
-          };
-          req.onblocked = () => {
-            console.warn("IndexedDB bloqueado por otra pestaña.");
-            dbInitBlocked = true;
-            finish(null);
-          };
-        } catch (err) {
-          console.warn("Excepción abriendo IndexedDB:", err);
-          dbInitBlocked = true;
-          finish(null);
-        }
-      }).finally(() => {
-        dbOpeningPromise = null;
-      });
-      return dbOpeningPromise;
-    }
-
-    async function ensureDb() {
-      if (db) return db;
-      if (dbInitBlocked) return null;
-      return await openDatabase();
-    }
-
-    function putInMemoryStore(storeName, item) {
-      if (db && (storeName === "bookAssets" || storeName === "bookContents")) return;
-      const keyProp = STORE_KEY_PATHS[storeName] || "key";
-      if (!inMemoryDb[storeName]) inMemoryDb[storeName] = [];
-      const idx = inMemoryDb[storeName].findIndex(x => x && x[keyProp] === item[keyProp]);
-      if (idx !== -1) inMemoryDb[storeName][idx] = item;
-      else inMemoryDb[storeName].push(item);
-    }
-
-    async function dbSave(storeName, item) {
-      const conn = await ensureDb();
-      return new Promise((resolve) => {
-        if (!conn) {
-          putInMemoryStore(storeName, item);
-          resolve(true);
-          return;
-        }
-
-        try {
-          const tx = conn.transaction(storeName, "readwrite");
-          tx.objectStore(storeName).put(item);
-          tx.oncomplete = () => resolve(true);
-          tx.onerror = (ev) => {
-            const err = tx.error || ev?.target?.error;
-            if (err && (err.name === "QuotaExceededError" || err.code === 22)) {
-              showToast(currentLang === "es" ? "Almacenamiento lleno: libera espacio en tu navegador." : "Storage quota exceeded: free up browser space.");
-            }
-            resolve(false);
-          };
-          tx.onabort = () => {
-            const err = tx.error;
-            if (err && (err.name === "QuotaExceededError" || err.code === 22)) {
-              showToast(currentLang === "es" ? "Almacenamiento lleno: no se pudo guardar." : "Storage full: could not save.");
-            }
-            resolve(false);
-          };
-        } catch (e) {
-          resolve(false);
-        }
-      });
-    }
-
-    async function dbGet(storeName, key) {
-      const conn = await ensureDb();
-      return new Promise((resolve) => {
-        const keyProp = STORE_KEY_PATHS[storeName] || "key";
-        if (!conn) {
-          const list = inMemoryDb[storeName] || [];
-          resolve(list.find(x => x && x[keyProp] === key) || null);
-          return;
-        }
-
-        try {
-          const tx = conn.transaction(storeName, "readonly");
-          const req = tx.objectStore(storeName).get(key);
-          req.onsuccess = () => resolve(req.result || null);
-          req.onerror = () => resolve(null);
-        } catch (e) {
-          resolve(null);
-        }
-      });
-    }
-
-    async function dbGetAll(storeName) {
-      const conn = await ensureDb();
-      return new Promise((resolve) => {
-        if (!conn) {
-          resolve(inMemoryDb[storeName] || []);
-          return;
-        }
-
-        try {
-          const tx = conn.transaction(storeName, "readonly");
-          const req = tx.objectStore(storeName).getAll();
-          req.onsuccess = () => resolve(req.result || []);
-          req.onerror = () => resolve(inMemoryDb[storeName] || []);
-        } catch (e) {
-          resolve(inMemoryDb[storeName] || []);
-        }
-      });
-    }
-
-    async function dbClear(storeName) {
-      const conn = await ensureDb();
-      return new Promise((resolve) => {
-        inMemoryDb[storeName] = [];
-        if (!conn) {
-          resolve();
-          return;
-        }
-
-        try {
-          const tx = conn.transaction(storeName, "readwrite");
-          tx.objectStore(storeName).clear();
-          tx.oncomplete = () => resolve();
-          tx.onerror = () => resolve();
-        } catch (e) {
-          resolve();
-        }
-      });
-    }
-
-    async function dbDelete(storeName, key) {
-      const conn = await ensureDb();
-      return new Promise((resolve) => {
-        const keyProp = STORE_KEY_PATHS[storeName] || "key";
-        if (inMemoryDb[storeName]) {
-          inMemoryDb[storeName] = inMemoryDb[storeName].filter(x => x && x[keyProp] !== key);
-        }
-        if (!conn) {
-          resolve();
-          return;
-        }
-
-        try {
-          const tx = conn.transaction(storeName, "readwrite");
-          tx.objectStore(storeName).delete(key);
-          tx.oncomplete = () => resolve();
-          tx.onerror = () => resolve();
-        } catch (e) {
-          resolve();
-        }
-      });
-    }
-
-    async function dbSaveBatch(storeName, items, batchSize = 25) {
-      if (!Array.isArray(items) || items.length === 0) return true;
-      const conn = await ensureDb();
-      if (!conn) {
-        for (let i = 0; i < items.length; i++) {
-          if (items[i]) putInMemoryStore(storeName, items[i]);
-        }
-        return true;
+    window.NyxenStorage.configure({
+      onQuotaExceeded: () => {
+        showToast(currentLang === "es"
+          ? "Almacenamiento lleno: libera espacio en tu navegador."
+          : "Storage quota exceeded: free up browser space.");
+      },
+      onStatusChange: () => {
+        updateTempStorageWarningBanner();
+      },
+      getBooksList: () => (typeof booksList !== "undefined" ? booksList : []),
+      setBooksList: (next) => {
+        if (typeof booksList !== "undefined") booksList = Array.isArray(next) ? next : [];
+      },
+      getCurrentBook: () => (typeof currentBook !== "undefined" ? currentBook : null),
+      onRevokeCover: (bookId) => {
+        if (typeof revokeCoverObjectUrl === "function") revokeCoverObjectUrl(bookId);
+      },
+      onBeforeDeleteBook: (bookId) => {
+        if (typeof librarySearchIndexCache !== "undefined") librarySearchIndexCache.delete(bookId);
+        if (typeof booksById !== "undefined") booksById.delete(bookId);
+        if (typeof bookSearchHistoryCache !== "undefined") bookSearchHistoryCache.delete(bookId);
       }
-      let allOk = true;
-      for (let i = 0; i < items.length; i += batchSize) {
-        const chunk = items.slice(i, i + batchSize);
-        const ok = await new Promise((resolve) => {
-          let settled = false;
-          const finish = (val, err) => {
-            if (settled) return;
-            settled = true;
-            if (!val && err && (err.name === "QuotaExceededError" || err.code === 22)) {
-              showToast(currentLang === "es" ? "Almacenamiento lleno: libera espacio en tu navegador." : "Storage quota exceeded: free up browser space.");
-            }
-            resolve(val);
-          };
-          try {
-            const tx = conn.transaction(storeName, "readwrite");
-            const store = tx.objectStore(storeName);
-            for (let j = 0; j < chunk.length; j++) {
-              if (chunk[j]) store.put(chunk[j]);
-            }
-            tx.oncomplete = () => finish(true);
-            tx.onerror = (ev) => finish(false, tx.error || ev?.target?.error);
-            tx.onabort = () => finish(false, tx.error);
-          } catch (e) {
-            finish(false);
-          }
-        });
-        if (!ok) allOk = false;
-        if (i + batchSize < items.length) {
-          await new Promise(r => setTimeout(r, 0));
-        }
-      }
-      return allOk;
-    }
+    });
 
-    async function dbGetBatch(storeName, keys) {
-      if (!Array.isArray(keys) || keys.length === 0) return [];
-      const conn = await ensureDb();
-      const keyProp = STORE_KEY_PATHS[storeName] || "key";
-      if (!conn) {
-        const list = inMemoryDb[storeName] || [];
-        const byKey = new Map();
-        for (let i = 0; i < list.length; i++) {
-          if (list[i]) byKey.set(list[i][keyProp], list[i]);
-        }
-        return keys.map(k => byKey.get(k) || null);
-      }
-      return new Promise((resolve) => {
-        try {
-          const tx = conn.transaction(storeName, "readonly");
-          const store = tx.objectStore(storeName);
-          const results = new Array(keys.length).fill(null);
-          for (let i = 0; i < keys.length; i++) {
-            const req = store.get(keys[i]);
-            req.onsuccess = () => { results[i] = req.result || null; };
-            req.onerror = () => { results[i] = null; };
-          }
-          tx.oncomplete = () => resolve(results);
-          tx.onerror = () => resolve(results);
-          tx.onabort = () => resolve(results);
-        } catch (e) {
-          resolve(new Array(keys.length).fill(null));
-        }
-      });
-    }
+    const openDatabase = window.NyxenStorage.raw.openDatabase;
+    const ensureDb = window.NyxenStorage.raw.ensureDb;
+    const isUsingTempMemoryStorage = window.NyxenStorage.raw.isUsingTempMemoryStorage;
+    const requestPersistentStorage = window.NyxenStorage.raw.requestPersistentStorage;
+    const dbSave = window.NyxenStorage.raw.dbSave;
+    const dbGet = window.NyxenStorage.raw.dbGet;
+    const dbGetAll = window.NyxenStorage.raw.dbGetAll;
+    const dbGetAllKeys = window.NyxenStorage.raw.dbGetAllKeys;
+    const dbClear = window.NyxenStorage.raw.dbClear;
+    const dbDelete = window.NyxenStorage.raw.dbDelete;
+    const dbSaveBatch = window.NyxenStorage.raw.dbSaveBatch;
+    const dbGetBatch = window.NyxenStorage.raw.dbGetBatch;
+    const dbDeleteBatch = window.NyxenStorage.raw.dbDeleteBatch;
 
-    async function dbDeleteBatch(storeName, keys, batchSize = 40) {
-      if (!Array.isArray(keys) || keys.length === 0) return;
-      const keyProp = STORE_KEY_PATHS[storeName] || "key";
-      if (inMemoryDb[storeName]) {
-        const delSet = new Set(keys);
-        inMemoryDb[storeName] = inMemoryDb[storeName].filter(x => x && !delSet.has(x[keyProp]));
-      }
-      const conn = await ensureDb();
-      if (!conn) return;
-      for (let i = 0; i < keys.length; i += batchSize) {
-        const chunk = keys.slice(i, i + batchSize);
-        await new Promise((resolve) => {
-          try {
-            const tx = conn.transaction(storeName, "readwrite");
-            const store = tx.objectStore(storeName);
-            for (let j = 0; j < chunk.length; j++) {
-              store.delete(chunk[j]);
-            }
-            tx.oncomplete = () => resolve();
-            tx.onerror = () => resolve();
-            tx.onabort = () => resolve();
-          } catch (e) {
-            resolve();
-          }
-        });
-      }
-    }
+    const revokeBookObjectUrls = window.NyxenStorage.assets.revokeBookObjectUrls;
+    const resolveBookAssetUrl = window.NyxenStorage.assets.resolveBookAssetUrl;
+    const hydrateChapterImages = window.NyxenStorage.assets.hydrateChapterImages;
 
-    function getBookCollections(book) {
-      if (!book) return [];
-      const raw = Array.isArray(book.groups)
-        ? book.groups
-        : (typeof book.group === "string" && book.group.trim() ? [book.group] : []);
-      const seen = new Set();
-      const result = [];
-      for (const item of raw) {
-        const name = String(item || "").trim();
-        if (!name) continue;
-        const key = name.toLowerCase();
-        if (!seen.has(key)) {
-          seen.add(key);
-          result.push(name);
-        }
-      }
-      return result;
-    }
-
-    function setBookCollections(book, collections) {
-      if (!book) return [];
-      const clean = getBookCollections({ groups: collections });
-      if (clean.length > 0) {
-        book.groups = clean;
-        book.group = clean[0];
-      } else {
-        delete book.groups;
-        delete book.group;
-      }
-      return clean;
-    }
-
-    function getAllLibraryCollections() {
-      const seen = new Map();
-      for (const b of booksList) {
-        for (const col of getBookCollections(b)) {
-          const key = col.toLowerCase();
-          if (!seen.has(key)) seen.set(key, col);
-        }
-      }
-      return Array.from(seen.values());
-    }
-
-    // Guarda únicamente los metadatos ligeros del libro (sin reescribir decenas de MB de capítulos/imágenes)
-    async function saveBookMeta(book) {
-      if (!book || !book.id) return false;
-      const cols = getBookCollections(book);
-      const metaRecord = {
-        id: book.id,
-        title: book.title,
-        author: book.author,
-        language: book.language || "",
-        description: book.description,
-        tags: Array.isArray(book.tags) ? book.tags : [],
-        cover: book.cover,
-        totalChapters: book.totalChapters,
-        currentChapter: book.currentChapter || 0,
-        chapterScrollRatio: book.chapterScrollRatio || 0,
-        chapterAnchor: book.chapterAnchor && typeof book.chapterAnchor === "object" ? book.chapterAnchor : null,
-        hasStartedReading: Boolean(book.hasStartedReading),
-        allowExternalResources: Boolean(book.allowExternalResources),
-        status: book.status || "Leyendo",
-        group: cols[0],
-        groups: cols.length > 0 ? cols : undefined,
-        addedAt: book.addedAt || Date.now(),
-        lastOpenedAt: book.lastOpenedAt || 0,
-        rating: typeof book.rating === "number" && book.rating > 0 ? Math.min(5, Math.max(0.5, Math.round(book.rating * 2) / 2)) : 0,
-        review: typeof book.review === "string" ? book.review : "",
-        reviewedAt: typeof book.reviewedAt === "number" ? book.reviewedAt : 0,
-        highlights: book.highlights || [],
-        chapterWordCounts: Array.isArray(book.chapterWordCounts) ? book.chapterWordCounts : undefined,
-        favoriteChapters: Array.isArray(book.chapters)
-          ? book.chapters.filter(c => c.isFavorite).map(c => c.index)
-          : (book.favoriteChapters || [])
-      };
-      const idx = booksList.findIndex(b => b.id === book.id);
-      if (idx !== -1) {
-        booksList[idx] = { ...booksList[idx], ...metaRecord };
-        if (metaRecord.group === undefined) delete booksList[idx].group;
-        if (metaRecord.groups === undefined) delete booksList[idx].groups;
-      } else {
-        booksList.push(metaRecord);
-      }
-      if (currentBook && currentBook.id === book.id && currentBook !== book) {
-        const preservedChapters = currentBook.chapters;
-        const preservedFootnotes = currentBook.footnotes;
-        Object.assign(currentBook, metaRecord);
-        if (metaRecord.group === undefined) delete currentBook.group;
-        if (metaRecord.groups === undefined) delete currentBook.groups;
-        if (Array.isArray(preservedChapters) && preservedChapters.length > 0) {
-          currentBook.chapters = preservedChapters;
-        }
-        if (preservedFootnotes) {
-          currentBook.footnotes = preservedFootnotes;
-        }
-      }
-      return await dbSave("books", metaRecord);
-    }
-
-    // Guarda el libro completo particionando capítulos en bloques ligeros para evitar picos de RAM/IPC en móviles
-    const CHAPTER_CHUNK_SIZE = 15;
-
-    async function saveFullBookToDb(bookData, assetBlobs = []) {
-      if (!bookData || !bookData.id) return false;
-      if (Array.isArray(assetBlobs) && assetBlobs.length > 0) {
-        const assetBatch = [];
-        for (let i = 0; i < assetBlobs.length; i++) {
-          const asset = assetBlobs[i];
-          if (!asset || !asset.assetKey) continue;
-          assetBatch.push({
-            assetKey: asset.assetKey,
-            bookId: bookData.id,
-            buffer: asset.buffer || null,
-            mimeType: asset.mimeType || "image/jpeg"
-          });
-          assetBlobs[i] = null;
-        }
-        if (assetBatch.length > 0) {
-          const assetsSaved = await dbSaveBatch("bookAssets", assetBatch, 16);
-          if (!assetsSaved) {
-            await deleteBookAndAssets(bookData.id).catch(() => {});
-            booksList = booksList.filter(b => b && b.id !== bookData.id);
-            return false;
-          }
-        }
-      }
-
-      const chapters = Array.isArray(bookData.chapters) ? bookData.chapters : [];
-      let contentSaved = false;
-      if (chapters.length > CHAPTER_CHUNK_SIZE) {
-        const chunkCount = Math.ceil(chapters.length / CHAPTER_CHUNK_SIZE);
-        const contentBatch = [];
-        for (let c = 0; c < chunkCount; c++) {
-          const slice = chapters.slice(c * CHAPTER_CHUNK_SIZE, (c + 1) * CHAPTER_CHUNK_SIZE);
-          contentBatch.push({
-            bookId: `${bookData.id}__chunk_${c}`,
-            chapters: slice
-          });
-        }
-        contentBatch.push({
-          bookId: bookData.id,
-          chunkCount,
-          chapters: [],
-          footnotes: bookData.footnotes || {}
-        });
-        contentSaved = await dbSaveBatch("bookContents", contentBatch, 10);
-      } else {
-        contentSaved = await dbSave("bookContents", {
-          bookId: bookData.id,
-          chunkCount: 0,
-          chapters,
-          footnotes: bookData.footnotes || {}
-        });
-      }
-
-      if (!contentSaved) {
-        await deleteBookAndAssets(bookData.id).catch(() => {});
-        booksList = booksList.filter(b => b && b.id !== bookData.id);
-        return false;
-      }
-
-      const metaSaved = await saveBookMeta(bookData);
-      if (!metaSaved) {
-        await deleteBookAndAssets(bookData.id).catch(() => {});
-        booksList = booksList.filter(b => b && b.id !== bookData.id);
-        return false;
-      }
-      return true;
-    }
-
-    let lastHydratedBookId = null;
-
-    function releaseBookHeavyMemory(bookIdToFree, keepBookObj = null) {
-      if (!bookIdToFree) return;
-      revokeBookObjectUrls(`${bookIdToFree}::`);
-      if (Array.isArray(booksList)) {
-        const listMatch = booksList.find(b => b && b.id === bookIdToFree);
-        if (listMatch && listMatch !== keepBookObj) {
-          listMatch.chapters = [];
-          listMatch.footnotes = {};
-        }
-      }
-    }
-
-    // Hidrata bajo demanda los capítulos (incluyendo soporte de bloques particionados) solo cuando se abre un libro
-    async function ensureBookHydrated(book) {
-      if (!book) return null;
-      if (lastHydratedBookId && lastHydratedBookId !== book.id) {
-        releaseBookHeavyMemory(lastHydratedBookId, book);
-      }
-      if (!Array.isArray(book.chapters) || book.chapters.length === 0) {
-        const contentRec = await dbGet("bookContents", book.id);
-        if (contentRec) {
-          if (contentRec.chunkCount && contentRec.chunkCount > 0) {
-            const chunkKeys = [];
-            for (let c = 0; c < contentRec.chunkCount; c++) {
-              chunkKeys.push(`${book.id}__chunk_${c}`);
-            }
-            const chunkRecords = await dbGetBatch("bookContents", chunkKeys);
-            const merged = [];
-            for (let c = 0; c < chunkRecords.length; c++) {
-              const chRec = chunkRecords[c];
-              if (chRec && Array.isArray(chRec.chapters)) {
-                for (let k = 0; k < chRec.chapters.length; k++) {
-                  merged.push(chRec.chapters[k]);
-                }
-              }
-            }
-            book.chapters = merged;
-          } else {
-            book.chapters = contentRec.chapters || [];
-          }
-          book.footnotes = contentRec.footnotes || {};
-        } else {
-          book.chapters = [];
-          book.footnotes = {};
-        }
-      }
-      lastHydratedBookId = book.id;
-      if (Array.isArray(book.favoriteChapters) && Array.isArray(book.chapters)) {
-        const favSet = new Set(book.favoriteChapters);
-        book.chapters.forEach(c => {
-          c.isFavorite = favSet.has(c.index) || Boolean(c.isFavorite);
-        });
-      }
-      return book;
-    }
-
-    async function resolveBookAssetUrl(assetKey) {
-      if (!assetKey) return "";
-      if (activeObjectUrls.has(assetKey)) return activeObjectUrls.get(assetKey);
-      const rec = await dbGet("bookAssets", assetKey);
-      if (!rec) return "";
-      try {
-        if (rec.buffer) {
-          const blob = new Blob([rec.buffer], { type: rec.mimeType || "image/jpeg" });
-          const objUrl = URL.createObjectURL(blob);
-          activeObjectUrls.set(assetKey, objUrl);
-          return objUrl;
-        }
-        if (rec.blob instanceof Blob) {
-          const objUrl = URL.createObjectURL(rec.blob);
-          activeObjectUrls.set(assetKey, objUrl);
-          return objUrl;
-        }
-      } catch (e) {}
-      return "";
-    }
-
-    async function hydrateChapterImages(containerEl) {
-      if (!containerEl) return;
-      const assetImgs = Array.from(containerEl.querySelectorAll("[data-nyx-asset], [data-lumina-asset]"));
-      if (assetImgs.length === 0) return;
-
-      const missingKeys = [];
-      const seenMissing = new Set();
-      for (let i = 0; i < assetImgs.length; i++) {
-        const key = assetImgs[i].getAttribute("data-nyx-asset") || assetImgs[i].getAttribute("data-lumina-asset");
-        if (key && !activeObjectUrls.has(key) && !seenMissing.has(key)) {
-          seenMissing.add(key);
-          missingKeys.push(key);
-        }
-      }
-
-      if (missingKeys.length > 0) {
-        const records = await dbGetBatch("bookAssets", missingKeys);
-        for (let i = 0; i < missingKeys.length; i++) {
-          const rec = records[i];
-          if (!rec) continue;
-          try {
-            let objUrl = "";
-            if (rec.buffer) {
-              const blob = new Blob([rec.buffer], { type: rec.mimeType || "image/jpeg" });
-              objUrl = URL.createObjectURL(blob);
-            } else if (rec.blob instanceof Blob) {
-              objUrl = URL.createObjectURL(rec.blob);
-            }
-            if (objUrl) activeObjectUrls.set(missingKeys[i], objUrl);
-          } catch (e) {}
-        }
-      }
-
-      for (let i = 0; i < assetImgs.length; i++) {
-        const el = assetImgs[i];
-        if (!el.isConnected) continue;
-        const key = el.getAttribute("data-nyx-asset") || el.getAttribute("data-lumina-asset");
-        const url = key ? activeObjectUrls.get(key) : "";
-        if (url) {
-          if (el.tagName.toLowerCase() === "image") {
-            el.setAttribute("xlink:href", url);
-            el.setAttribute("href", url);
-          } else {
-            el.setAttribute("src", url);
-          }
-          el.removeAttribute("data-nyx-asset");
-          el.removeAttribute("data-lumina-asset");
-          el.removeAttribute("data-nyx-blocked-badge");
-        }
-      }
-    }
-
-    async function dbGetAllKeys(storeName) {
-      const conn = await ensureDb();
-      return new Promise((resolve) => {
-        if (!conn) {
-          const keyProp = STORE_KEY_PATHS[storeName] || "key";
-          const list = inMemoryDb[storeName] || [];
-          resolve(list.map(x => x && x[keyProp]).filter(Boolean));
-          return;
-        }
-        try {
-          const tx = conn.transaction(storeName, "readonly");
-          const store = tx.objectStore(storeName);
-          if (typeof store.getAllKeys === "function") {
-            const req = store.getAllKeys();
-            req.onsuccess = () => resolve(req.result || []);
-            req.onerror = () => resolve([]);
-          } else {
-            resolve([]);
-          }
-        } catch (e) {
-          resolve([]);
-        }
-      });
-    }
-
-    async function deleteBookAndAssets(bookId) {
-      revokeBookObjectUrls(`${bookId}::`);
-      if (typeof revokeCoverObjectUrl === "function") revokeCoverObjectUrl(bookId);
-      if (typeof librarySearchIndexCache !== "undefined") librarySearchIndexCache.delete(bookId);
-      if (typeof booksById !== "undefined") booksById.delete(bookId);
-      const contentRec = await dbGet("bookContents", bookId);
-      const contentKeysToDelete = [bookId];
-      if (contentRec && contentRec.chunkCount > 0) {
-        for (let c = 0; c < contentRec.chunkCount; c++) {
-          contentKeysToDelete.push(`${bookId}__chunk_${c}`);
-        }
-      }
-      await dbDeleteBatch("bookContents", contentKeysToDelete, 40);
-      await dbDelete("books", bookId);
-      await dbDelete("settings", `bookSearchHistory_${bookId}`);
-      if (typeof bookSearchHistoryCache !== "undefined") bookSearchHistoryCache.delete(bookId);
-      const assetKeys = await dbGetAllKeys("bookAssets");
-      const matchingAssetKeys = assetKeys.filter(key => String(key).startsWith(`${bookId}::`));
-      if (matchingAssetKeys.length > 0) {
-        await dbDeleteBatch("bookAssets", matchingAssetKeys, 40);
-      }
-    }
+    const getBookCollections = window.NyxenStorage.books.getCollections;
+    const setBookCollections = window.NyxenStorage.books.setCollections;
+    const getAllLibraryCollections = window.NyxenStorage.books.getAllCollections;
+    const saveBookMeta = window.NyxenStorage.books.saveMeta;
+    const saveFullBookToDb = window.NyxenStorage.books.saveFull;
+    const releaseBookHeavyMemory = window.NyxenStorage.books.releaseHeavyMemory;
+    const ensureBookHydrated = window.NyxenStorage.books.ensureHydrated;
+    const deleteBookAndAssets = window.NyxenStorage.books.deleteWithAssets;
 
     /* -------------------------------------------------------------
-       3. PARSER ROBUSTO, LIGERO Y SANITIZADO DE EPUB (ANTI-CRASH)
+       3. PARSER ROBUSTO, LIGERO Y SANITIZADO DE EPUB (Módulos + Sanitizador)
     ------------------------------------------------------------- */
-    function resolveZipPath(baseDir, relativePath) {
-      if (!relativePath) return "";
-      const cleanRel = relativePath.split("#")[0].split("?")[0];
-      if (cleanRel.startsWith("/")) return cleanRel.slice(1);
-      const stack = baseDir ? baseDir.split("/").filter(Boolean) : [];
-      const parts = cleanRel.split("/");
-      for (const p of parts) {
-        if (p === "." || p === "") continue;
-        if (p === "..") {
-          if (stack.length > 0) stack.pop();
-        } else {
-          stack.push(p);
-        }
-      }
-      return stack.join("/");
-    }
+    const resolveZipPath = window.NyxenEpubZip.resolveZipPath;
+    const findZipEntry = window.NyxenEpubZip.findZipEntry;
+    const inferImageMimeType = window.NyxenEpubZip.inferImageMimeType;
+    const blobToDataURL = window.NyxenEpubZip.blobToDataURL;
+    const compressCoverToDataUrl = window.NyxenEpubZip.compressCoverToDataUrl;
+    const normalizeBookTags = window.NyxenEpubZip.normalizeBookTags;
 
-    const zipLowerIndexCache = new WeakMap();
+    const isExternalMediaUrl = window.NyxenSanitizer.isExternalMediaUrl;
+    const isSafeHttpUrl = window.NyxenSanitizer.isSafeHttpUrl;
+    const isSafeDataImageUrl = window.NyxenSanitizer.isSafeDataImageUrl;
+    const normalizeAssetMimeType = window.NyxenSanitizer.normalizeAssetMimeType;
+    const sanitizeCoverUrl = window.NyxenSanitizer.sanitizeCoverUrl;
+    const sanitizeCssColor = window.NyxenSanitizer.sanitizeCssColor;
+    const sanitizeInlineStyleUrls = window.NyxenSanitizer.sanitizeInlineStyleUrls;
+    const sanitizeEpubDom = window.NyxenSanitizer.sanitizeEpubDom;
+    const parseUntrustedHtml = window.NyxenSanitizer.parseUntrustedHtml;
+    const sanitizeChapterHtmlString = window.NyxenSanitizer.sanitizeChapterHtmlString;
+    const sanitizeFootnotesMap = window.NyxenSanitizer.sanitizeFootnotesMap;
 
-    function findZipEntry(zip, path) {
-      if (!zip || !path) return null;
-      const noHash = path.split("#")[0].split("?")[0];
-      let decoded = noHash;
-      try { decoded = decodeURIComponent(noHash); } catch (e) {}
-      const direct = zip.file(noHash) || zip.file(decoded);
-      if (direct) return direct;
-      let lowerMap = zipLowerIndexCache.get(zip);
-      if (!lowerMap) {
-        lowerMap = new Map();
-        const names = Object.keys(zip.files || {});
-        for (let i = 0; i < names.length; i++) {
-          const k = names[i];
-          if (!zip.files[k].dir) lowerMap.set(k.toLowerCase(), k);
-        }
-        zipLowerIndexCache.set(zip, lowerMap);
-      }
-      const matchKey = lowerMap.get(noHash.toLowerCase()) || lowerMap.get(decoded.toLowerCase());
-      return matchKey ? (zip.file(matchKey) || null) : null;
-    }
+    window.NyxenEpub.configure({
+      getLang: () => (typeof currentLang !== "undefined" ? currentLang : "es"),
+      createBookId: () => (typeof createUniqueId === "function" ? createUniqueId("book") : undefined),
+      countWords: (html) => (typeof countWordsFromHtml === "function" ? countWordsFromHtml(html) : 0),
+      sanitizeDom: (docNode, opts) => sanitizeEpubDom(docNode, {
+        ...(opts || {}),
+        lang: typeof currentLang !== "undefined" ? currentLang : "es"
+      }),
+      isExternalMediaUrl,
+      saveAssetBatch: (batch) => window.NyxenStorage.assets.saveBatch(batch, 16),
+      deleteBookOnError: (bookId) => window.NyxenStorage.books.deleteWithAssets(bookId)
+    });
 
-    function inferImageMimeType(path) {
-      const p = String(path || "").toLowerCase();
-      if (p.endsWith(".png")) return "image/png";
-      if (p.endsWith(".webp")) return "image/webp";
-      if (p.endsWith(".gif")) return "image/gif";
-      if (p.endsWith(".svg")) return "image/svg+xml";
-      return "image/jpeg";
-    }
-
-    function isExternalMediaUrl(rawUrl) {
-      const s = String(rawUrl || "").trim().toLowerCase();
-      return s.startsWith("http://") || s.startsWith("https://") || s.startsWith("//");
-    }
-
-    function sanitizeInlineStyleUrls(styleText, allowExternal = false) {
-      if (!styleText) return "";
-      let out = String(styleText).replace(/expression\s*\(/gi, "").replace(/behavior\s*:/gi, "");
-      if (!allowExternal) {
-        out = out.replace(/url\((['"]?)\s*(https?:)?\/\/[^)]*\1\)/gi, "none");
-      }
-      return out;
-    }
-
-    function sanitizeEpubDom(rootNode, options = {}) {
-      if (!rootNode) return;
-      const allowExternal = Boolean(options && options.allowExternal);
-      rootNode.querySelectorAll("script, iframe, object, embed, applet, form, input, button, textarea, select, meta, base, link, style, animate, set").forEach(el => el.remove());
-      rootNode.querySelectorAll("*").forEach(el => {
-        for (const attr of Array.from(el.attributes)) {
-          const n = attr.name.toLowerCase();
-          const v = attr.value.trim().toLowerCase();
-          if (n.startsWith("on") || n === "srcdoc" || n === "formaction" || n === "action" || n === "srcset") {
-            el.removeAttribute(attr.name);
-          } else if (n === "style") {
-            const cleanStyle = sanitizeInlineStyleUrls(attr.value, allowExternal);
-            if (cleanStyle !== attr.value) el.setAttribute("style", cleanStyle);
-          } else if ((n === "href" || n === "src" || n === "xlink:href" || n === "poster") && (v.startsWith("javascript:") || v.startsWith("vbscript:") || v.startsWith("data:text/html"))) {
-            el.removeAttribute(attr.name);
-          }
-        }
-      });
-    }
-
-    function blobToDataURL(blob) {
-      return new Promise((resolve, reject) => {
-        const reader = new FileReader();
-        reader.onload = () => resolve(reader.result);
-        reader.onerror = reject;
-        reader.readAsDataURL(blob);
-      });
-    }
-
-    // Comprime portadas pesadas usando decodificación de bajo consumo de memoria (createImageBitmap) y libera el canvas de inmediato
-    async function compressCoverToDataUrl(rawBytesOrBlob, mimeType = "image/jpeg", maxWidth = 260, maxHeight = 380, quality = 0.76) {
-      let tempUrl = "";
-      let bitmap = null;
-      let canvas = null;
-      try {
-        const blob = rawBytesOrBlob instanceof Blob
-          ? (rawBytesOrBlob.type ? rawBytesOrBlob : new Blob([rawBytesOrBlob], { type: mimeType }))
-          : new Blob([rawBytesOrBlob], { type: mimeType });
-
-        if (blob.size > 8 * 1024 * 1024) return null;
-        if (mimeType === "image/svg+xml" && blob.size < 180000) {
-          return await blobToDataURL(blob);
-        }
-
-        canvas = document.createElement("canvas");
-        const ctx = canvas.getContext("2d");
-        if (!ctx) return null;
-
-        if (typeof window.createImageBitmap === "function") {
-          try {
-            bitmap = await createImageBitmap(blob);
-            let w = bitmap.width || maxWidth;
-            let h = bitmap.height || maxHeight;
-            if (w > maxWidth || h > maxHeight) {
-              const ratio = Math.min(maxWidth / w, maxHeight / h);
-              w = Math.max(1, Math.round(w * ratio));
-              h = Math.max(1, Math.round(h * ratio));
-            }
-            canvas.width = w;
-            canvas.height = h;
-            ctx.fillStyle = "#18181b";
-            ctx.fillRect(0, 0, w, h);
-            ctx.drawImage(bitmap, 0, 0, w, h);
-            bitmap.close();
-            bitmap = null;
-            return canvas.toDataURL("image/jpeg", quality);
-          } catch (bmpErr) {
-            if (bitmap) {
-              try { bitmap.close(); } catch (e) {}
-              bitmap = null;
-            }
-          }
-        }
-
-        tempUrl = URL.createObjectURL(blob);
-        const img = await new Promise((resolve, reject) => {
-          const imageEl = new Image();
-          imageEl.onload = () => resolve(imageEl);
-          imageEl.onerror = reject;
-          imageEl.src = tempUrl;
-        });
-
-        let w = img.naturalWidth || img.width || maxWidth;
-        let h = img.naturalHeight || img.height || maxHeight;
-        if (w > maxWidth || h > maxHeight) {
-          const ratio = Math.min(maxWidth / w, maxHeight / h);
-          w = Math.max(1, Math.round(w * ratio));
-          h = Math.max(1, Math.round(h * ratio));
-        }
-
-        canvas.width = w;
-        canvas.height = h;
-        ctx.fillStyle = "#18181b";
-        ctx.fillRect(0, 0, w, h);
-        ctx.drawImage(img, 0, 0, w, h);
-        img.src = "";
-        return canvas.toDataURL("image/jpeg", quality);
-      } catch (e) {
-        return null;
-      } finally {
-        if (bitmap) {
-          try { bitmap.close(); } catch (e) {}
-        }
-        if (canvas) {
-          canvas.width = 0;
-          canvas.height = 0;
-        }
-        if (tempUrl) {
-          try { URL.revokeObjectURL(tempUrl); } catch (e) {}
-        }
-      }
-    }
-
-    async function parseLocalEpub(file) {
-      const bookId = createUniqueId("book");
-      // Cargar directamente desde el Blob/File sin duplicar todo el archivo en un ArrayBuffer adicional
-      const zip = await JSZip.loadAsync(file, { createFolders: false });
-      const containerFile = findZipEntry(zip, "META-INF/container.xml") || findZipEntry(zip, "meta-inf/container.xml");
-      if (!containerFile) throw new Error("Falta container.xml");
-
-      const containerXml = await containerFile.async("text");
-      delete zip.files[containerFile.name];
-      const domParser = new DOMParser();
-      const containerDoc = domParser.parseFromString(containerXml, "application/xml");
-      const rootfile = containerDoc.querySelector("rootfile");
-      if (!rootfile) throw new Error("Rootfile no encontrado");
-
-      const opfPath = rootfile.getAttribute("full-path") || "";
-      const opfDir = opfPath.includes("/") ? opfPath.substring(0, opfPath.lastIndexOf("/") + 1) : "";
-      const opfFile = findZipEntry(zip, opfPath);
-      if (!opfFile) throw new Error("OPF no encontrado");
-
-      const opfXml = await opfFile.async("text");
-      delete zip.files[opfFile.name];
-      const opfDoc = domParser.parseFromString(opfXml, "application/xml");
-
-      const titleElem = opfDoc.querySelector("title") || opfDoc.getElementsByTagNameNS("*", "title")[0];
-      const title = titleElem ? titleElem.textContent.trim() : file.name.replace(/\.epub$/i, "");
-
-      const authorElem = opfDoc.querySelector("creator") || opfDoc.getElementsByTagNameNS("*", "creator")[0];
-      const author = authorElem ? authorElem.textContent.trim() : "Autor Desconocido";
-
-      const langElem = opfDoc.querySelector("language") || opfDoc.getElementsByTagNameNS("*", "language")[0];
-      const bookLanguage = langElem ? langElem.textContent.trim().toLowerCase() : "";
-
-      const descElem = opfDoc.querySelector("description") || opfDoc.getElementsByTagNameNS("*", "description")[0];
-      const rawDesc = descElem ? descElem.textContent.trim() : "";
-      const description = rawDesc
-        .replace(/<\s*br\s*\/?>/gi, "\n")
-        .replace(/<\/\s*p\s*>/gi, "\n\n")
-        .replace(/<[^>]*>?/gm, "")
-        .replace(/\n{3,}/g, "\n\n")
-        .trim();
-
-      const rawTagChunks = [];
-      const subjectNodes = [
-        ...opfDoc.querySelectorAll("subject"),
-        ...opfDoc.getElementsByTagNameNS("*", "subject")
-      ];
-      subjectNodes.forEach(n => {
-        const val = (n.textContent || "").trim();
-        if (val) rawTagChunks.push(val);
-      });
-      opfDoc.querySelectorAll('meta[name="keywords"], meta[property="schema:keywords"], meta[name="tags"]').forEach(m => {
-        const val = (m.getAttribute("content") || m.textContent || "").trim();
-        if (val) rawTagChunks.push(val);
-      });
-      const inlineHashMatches = description.match(/#([A-Za-z0-9À-ÿ_-]{2,32})/g);
-      if (inlineHashMatches) rawTagChunks.push(...inlineHashMatches);
-      const tags = normalizeBookTags(rawTagChunks);
-
-      const manifest = {};
-      const items = opfDoc.querySelectorAll("item");
-      let coverHref = null;
-      let coverId = null;
-      let tocHref = null;
-      let navHref = null;
-      const metaCover = opfDoc.querySelector('meta[name="cover"]');
-      if (metaCover) coverId = metaCover.getAttribute("content");
-
-      items.forEach(item => {
-        const id = item.getAttribute("id") || "";
-        const href = item.getAttribute("href") || "";
-        const mediaType = item.getAttribute("media-type") || "";
-        const properties = item.getAttribute("properties") || "";
-        const fullZipPath = resolveZipPath(opfDir, href);
-        manifest[id] = { href: fullZipPath, mediaType, id };
-
-        if (properties.includes("cover-image") || id === coverId || (id.toLowerCase().includes("cover") && mediaType.startsWith("image/"))) {
-          coverHref = fullZipPath;
-        }
-        if (properties.includes("nav")) {
-          navHref = fullZipPath;
-        }
-        if (mediaType === "application/x-dtbncx+xml" || href.toLowerCase().endsWith(".ncx")) {
-          tocHref = fullZipPath;
-        }
-      });
-
-      const tocTitlesMap = {};
-      const registerTocEntry = (baseDir, rawHref, label) => {
-        if (!rawHref || !label) return;
-        const cleanLabel = label.trim().replace(/\s+/g, " ");
-        if (!cleanLabel) return;
-        const resolved = resolveZipPath(baseDir, rawHref);
-        let decoded = resolved;
-        try { decoded = decodeURIComponent(resolved); } catch (e) {}
-        if (!tocTitlesMap[resolved]) tocTitlesMap[resolved] = cleanLabel;
-        if (!tocTitlesMap[decoded]) tocTitlesMap[decoded] = cleanLabel;
-      };
-
-      if (navHref) {
-        const navEntry = findZipEntry(zip, navHref);
-        if (navEntry) {
-          try {
-            const navDir = navHref.includes("/") ? navHref.substring(0, navHref.lastIndexOf("/") + 1) : "";
-            const navDoc = domParser.parseFromString(await navEntry.async("text"), "text/html");
-            navDoc.querySelectorAll("nav a[href]").forEach(a => {
-              registerTocEntry(navDir, a.getAttribute("href"), a.textContent);
-            });
-          } catch (e) {}
-        }
-      }
-
-      if (tocHref) {
-        const ncxEntry = findZipEntry(zip, tocHref);
-        if (ncxEntry) {
-          try {
-            const ncxDir = tocHref.includes("/") ? tocHref.substring(0, tocHref.lastIndexOf("/") + 1) : "";
-            const ncxDoc = domParser.parseFromString(await ncxEntry.async("text"), "application/xml");
-            ncxDoc.querySelectorAll("navPoint").forEach(np => {
-              const txtEl = np.querySelector("navLabel > text");
-              const contentEl = np.querySelector("content");
-              if (txtEl && contentEl) {
-                registerTocEntry(ncxDir, contentEl.getAttribute("src"), txtEl.textContent);
-              }
-            });
-            delete zip.files[ncxEntry.name];
-          } catch (e) {}
-        }
-      }
-
-      if (!coverHref) {
-        for (const filePath of Object.keys(zip.files)) {
-          if (/(cover|portada|front)[^/]*\.(jpe?g|png|webp)/i.test(filePath)) {
-            coverHref = filePath;
-            break;
-          }
-        }
-      }
-
-      let coverDataUrl = null;
-      if (coverHref) {
-        const coverEntry = findZipEntry(zip, coverHref);
-        if (coverEntry) {
-          try {
-            const rawBytes = await coverEntry.async("uint8array");
-            coverDataUrl = await compressCoverToDataUrl(rawBytes, inferImageMimeType(coverHref));
-          } catch (e) {}
-        }
-      }
-
-      const spineItemrefs = opfDoc.querySelectorAll("itemref");
-      const spineItems = [];
-      spineItemrefs.forEach(ref => {
-        const idref = ref.getAttribute("idref");
-        if (manifest[idref]) spineItems.push(manifest[idref]);
-      });
-
-      const MAX_SPINE_ITEMS = 2500;
-      const MAX_CHAPTER_HTML_BYTES = 6 * 1024 * 1024;
-      if (spineItems.length > MAX_SPINE_ITEMS) {
-        throw new Error(currentLang === "es"
-          ? `El EPUB excede el límite seguro de capítulos (${MAX_SPINE_ITEMS}).`
-          : `EPUB exceeds safe chapter limit (${MAX_SPINE_ITEMS}).`);
-      }
-
-      const chapters = [];
-      const seenAssets = new Set();
-      const referencedFootnoteIds = new Set();
-      const footnotesMap = {};
-      const MAX_FOOTNOTE_LENGTH = 1500;
-      const MAX_SINGLE_ASSET_BYTES = 1600 * 1024;
-      const MAX_TOTAL_ASSETS_BYTES = 24 * 1024 * 1024;
-      let totalExtractedAssetBytes = 0;
-      const pendingAssets = [];
-      let pendingAssetBytes = 0;
-      const flushPendingAssets = async () => {
-        if (pendingAssets.length === 0) return;
-        const batch = pendingAssets.splice(0, pendingAssets.length);
-        pendingAssetBytes = 0;
-        const ok = await dbSaveBatch("bookAssets", batch, 16);
-        if (!ok) {
-          throw new Error(currentLang === "es"
-            ? "No se pudieron guardar las imágenes del libro."
-            : "Failed to save book images.");
-        }
-      };
-
-      function storeFootnote(key, rawTxt) {
-        if (!key || !rawTxt) return;
-        const k = key.trim();
-        const clean = rawTxt.trim().replace(/\s+/g, " ");
-        if (/^\[?\s*\d+\s*\]?[.:)]?$/.test(clean) || clean.length < 2 || clean.length > MAX_FOOTNOTE_LENGTH) return;
-
-        if (!footnotesMap[k] || clean.length > footnotesMap[k].length) {
-          footnotesMap[k] = clean;
-        }
-        const lower = k.toLowerCase();
-        if (!footnotesMap[lower] || clean.length > footnotesMap[lower].length) {
-          footnotesMap[lower] = clean;
-        }
-        const tail = k.split(/[-_:]/).pop();
-        if (tail && (!footnotesMap[tail] || clean.length > footnotesMap[tail].length)) {
-          footnotesMap[tail] = clean;
-        }
-      }
-
-      function extractCleanText(node) {
-        if (!node) return "";
-        const raw = (node.textContent || "").trim();
-        if (!raw || raw.length > MAX_FOOTNOTE_LENGTH * 2) return "";
-        const clone = node.cloneNode(true);
-        clone.querySelectorAll("a, .backlink, .footnote-return, .reversefootnote").forEach(a => {
-          if (a.textContent.match(/^[↩↑\^\[\]0-9\s:.-]+$/)) a.remove();
-        });
-        return clone.textContent.trim().replace(/\s+/g, " ");
-      }
-
-      function collectFootnotesFromDoc(docNode) {
-        if (!docNode) return;
-        docNode.querySelectorAll("aside[epub\\:type*='footnote'], aside[epub\\:type*='endnote'], [role='doc-footnote'], [role='doc-endnote'], .footnote, .endnote").forEach(el => {
-          const id = el.getAttribute("id");
-          if (id) storeFootnote(id, extractCleanText(el));
-        });
-
-        docNode.querySelectorAll("li[id], aside[id], dd[id], p[id], div[id]").forEach(el => {
-          const id = el.getAttribute("id");
-          if (!id) return;
-          if (/^(fn|note|ftn|endnote|foot|n[-_]?\d)/i.test(id) || referencedFootnoteIds.has(id)) {
-            let targetNode = el;
-            const directText = (el.textContent || "").trim();
-            if (el.tagName === "SPAN" || /^\[?\s*\d+\s*\]?[.:)]?$/.test(directText)) {
-              targetNode = el.closest("p, li, dd, aside, blockquote") || el.parentElement || el;
-            }
-            storeFootnote(id, extractCleanText(targetNode));
-          }
-        });
-
-        referencedFootnoteIds.forEach(refId => {
-          if (!refId || footnotesMap[refId]) return;
-          const el = docNode.getElementById(refId);
-          if (!el) return;
-          let targetNode = el;
-          const directText = (el.textContent || "").trim();
-          if (el.tagName === "A" || el.tagName === "SUP" || el.tagName === "SPAN" || /^\[?\s*\d+\s*\]?[.:)]?$/.test(directText)) {
-            targetNode = el.closest("p, li, dd, aside, blockquote") || el.parentElement || el;
-          } else if (el.tagName === "DT" && el.nextElementSibling) {
-            targetNode = el.nextElementSibling;
-          }
-          storeFootnote(refId, extractCleanText(targetNode));
-        });
-      }
-
-      try {
-        let importSliceStart = performance.now();
-        for (let i = 0; i < spineItems.length; i++) {
-          // Ceder por presupuesto de tiempo (18ms) en lugar de frenar cada 3 capítulos
-          if (i > 0 && (performance.now() - importSliceStart) > 18) {
-            await new Promise(r => setTimeout(r, 0));
-            importSliceStart = performance.now();
-          }
-
-          const item = spineItems[i];
-          const chapterFile = findZipEntry(zip, item.href);
-          if (!chapterFile) continue;
-
-          const htmlStr = await chapterFile.async("text");
-          delete zip.files[chapterFile.name];
-          if (htmlStr.length > MAX_CHAPTER_HTML_BYTES) {
-            throw new Error(currentLang === "es"
-              ? `El capítulo ${i + 1} supera el tamaño seguro permitido.`
-              : `Chapter ${i + 1} exceeds safe size limit.`);
-          }
-          const chapterDoc = domParser.parseFromString(htmlStr, "text/html");
-          sanitizeEpubDom(chapterDoc, { allowExternal: false });
-
-          chapterDoc.querySelectorAll("a[href*='#'], [epub\\:type*='noteref'], .noteref, .footnote-ref, sup a[href]").forEach(a => {
-            const href = a.getAttribute("href") || "";
-            if (href.includes("#")) {
-              try {
-                const hashId = decodeURIComponent(href.split("#")[1] || "").trim();
-                if (hashId) referencedFootnoteIds.add(hashId);
-              } catch (e) {}
-            }
-          });
-          collectFootnotesFromDoc(chapterDoc);
-
-          const chapterDir = item.href.includes("/") ? item.href.substring(0, item.href.lastIndexOf("/") + 1) : "";
-          const imgTags = chapterDoc.querySelectorAll("img, image");
-          for (const img of imgTags) {
-            const src = img.getAttribute("src") || img.getAttribute("xlink:href") || img.getAttribute("href");
-            if (!src) continue;
-            if (src.startsWith("data:")) {
-              // Evitar que imágenes Base64 gigantes incrustadas en el HTML desborden la memoria del capítulo
-              if (src.length > 90000) {
-                img.remove();
-              }
-              continue;
-            }
-            if (isExternalMediaUrl(src)) {
-              img.setAttribute("data-nyx-blocked-src", src);
-              img.setAttribute("data-nyx-blocked-badge", "1");
-              if (!img.getAttribute("alt")) {
-                img.setAttribute("alt", currentLang === "es" ? "Imagen externa bloqueada" : "Blocked external image");
-              }
-              img.removeAttribute("src");
-              img.removeAttribute("href");
-              img.removeAttribute("xlink:href");
-              img.removeAttribute("srcset");
-              continue;
-            }
-            const resolvedPath = resolveZipPath(chapterDir, src);
-            const assetKey = `${bookId}::${resolvedPath}`;
-            if (seenAssets.has(assetKey)) {
-              img.setAttribute("data-nyx-asset", assetKey);
-              img.removeAttribute("src");
-              img.removeAttribute("href");
-              img.removeAttribute("xlink:href");
-              continue;
-            }
-            const imgZip = findZipEntry(zip, resolvedPath);
-            if (imgZip) {
-              try {
-                const needCover = !coverDataUrl && i <= 2;
-                const needAsset = totalExtractedAssetBytes < MAX_TOTAL_ASSETS_BYTES;
-                const rawBytes = (needCover || needAsset) ? await imgZip.async("uint8array") : null;
-                if (needCover && rawBytes) {
-                  coverDataUrl = await compressCoverToDataUrl(rawBytes, inferImageMimeType(resolvedPath));
-                }
-
-                if (needAsset && rawBytes) {
-                  if (rawBytes.byteLength <= MAX_SINGLE_ASSET_BYTES && (totalExtractedAssetBytes + rawBytes.byteLength) <= MAX_TOTAL_ASSETS_BYTES) {
-                    pendingAssets.push({
-                      assetKey,
-                      bookId,
-                      buffer: rawBytes,
-                      mimeType: inferImageMimeType(resolvedPath)
-                    });
-                    pendingAssetBytes += rawBytes.byteLength;
-                    totalExtractedAssetBytes += rawBytes.byteLength;
-                    seenAssets.add(assetKey);
-                    if (pendingAssets.length >= 16 || pendingAssetBytes >= 3 * 1024 * 1024) {
-                      await flushPendingAssets();
-                    }
-                  }
-                }
-                delete zip.files[imgZip.name];
-                if (seenAssets.has(assetKey)) {
-                  img.setAttribute("data-nyx-asset", assetKey);
-                  img.removeAttribute("src");
-                  img.removeAttribute("href");
-                  img.removeAttribute("xlink:href");
-                } else {
-                  img.remove();
-                }
-              } catch (e) {}
-            } else {
-              img.remove();
-            }
-          }
-
-          let decodedHref = item.href;
-          try { decodedHref = decodeURIComponent(item.href); } catch (e) {}
-          let chapterTitle = tocTitlesMap[item.href] || tocTitlesMap[decodedHref] || "";
-
-          const hTitle = chapterDoc.querySelector("h1, h2, h3");
-          if (!chapterTitle && hTitle && hTitle.textContent.trim()) {
-            chapterTitle = hTitle.textContent.trim().substring(0, 80);
-          }
-          if (!chapterTitle) {
-            const docTitle = chapterDoc.querySelector("title");
-            if (docTitle && docTitle.textContent.trim() && docTitle.textContent.trim().toLowerCase() !== title.toLowerCase()) {
-              chapterTitle = docTitle.textContent.trim().substring(0, 80);
-            } else {
-              chapterTitle = `${currentLang === "es" ? "Capítulo" : "Chapter"} ${i + 1}`;
-            }
-          }
-
-          const chapterBodyHtml = chapterDoc.body ? chapterDoc.body.innerHTML : htmlStr;
-          if (chapterDoc.body) chapterDoc.body.innerHTML = "";
-
-          chapters.push({
-            index: i,
-            title: chapterTitle,
-            href: item.href,
-            html: chapterBodyHtml,
-            isFavorite: false
-          });
-        }
-
-        if (chapters.length === 0) {
-          throw new Error(currentLang === "es"
-            ? "El archivo EPUB no contiene capítulos legibles."
-            : "This EPUB contains no readable chapters.");
-        }
-
-        await flushPendingAssets();
-      } catch (parseErr) {
-        pendingAssets.length = 0;
-        await deleteBookAndAssets(bookId).catch(() => {});
-        throw parseErr;
-      }
-
-      // Liberar cualquier archivo restante del objeto JSZip
-      for (const k of Object.keys(zip.files)) {
-        delete zip.files[k];
-      }
-
-      const chapterWordCounts = chapters.map(c => countWordsFromHtml(c.html));
-
-      const bookRecord = {
-        id: bookId,
-        title,
-        author,
-        language: bookLanguage,
-        description,
-        tags,
-        cover: coverDataUrl,
-        chapters,
-        totalChapters: chapters.length,
-        chapterWordCounts,
-        currentChapter: 0,
-        chapterScrollRatio: 0,
-        chapterAnchor: null,
-        hasStartedReading: false,
-        allowExternalResources: false,
-        status: "Leyendo",
-        highlights: [],
-        footnotes: footnotesMap
-      };
-
-      return { bookRecord, assetBlobs: [] };
-    }
-
-    function normalizeBookTags(rawInput) {
-      const tokens = [];
-      const pushChunk = (chunk) => {
-        if (!chunk) return;
-        String(chunk).split(/[,;\n|]+/).forEach(part => {
-          const trimmed = part.trim();
-          if (!trimmed) return;
-          if (trimmed.includes("#") && /\s/.test(trimmed)) {
-            trimmed.split(/\s+/).forEach(w => { if (w) tokens.push(w); });
-          } else {
-            tokens.push(trimmed);
-          }
-        });
-      };
-
-      if (Array.isArray(rawInput)) rawInput.forEach(pushChunk);
-      else pushChunk(rawInput);
-
-      const seen = new Set();
-      const result = [];
-      for (const tok of tokens) {
-        let cleaned = tok.replace(/^#+/, "").trim();
-        if (!cleaned) continue;
-        cleaned = cleaned
-          .split(/\s+/)
-          .filter(Boolean)
-          .map((w, idx) => idx === 0 ? w : (w.charAt(0).toUpperCase() + w.slice(1)))
-          .join("")
-          .replace(/[^\p{L}\p{N}_-]/gu, "");
-        if (cleaned.length < 2 || cleaned.length > 36) continue;
-        const lower = cleaned.toLowerCase();
-        if (!seen.has(lower)) {
-          seen.add(lower);
-          result.push(cleaned);
-          if (result.length >= 24) break;
-        }
-      }
-      return result;
-    }
+    const parseLocalEpub = window.NyxenEpub.parseLocalEpub;
 
     /* -------------------------------------------------------------
        5. ESTADO GLOBAL
@@ -7065,10 +5865,7 @@ https://github.com/nodeca/pako/blob/main/LICENSE
 
       if (viewName === "library") {
         if (typeof resetDrawerSearchState === "function") resetDrawerSearchState({ clearInput: true });
-        if (lastHydratedBookId) {
-          releaseBookHeavyMemory(lastHydratedBookId);
-          lastHydratedBookId = null;
-        }
+        window.NyxenStorage.books.releaseLastHydratedBook();
         const readerContentNode = document.getElementById("readerContent");
         if (readerContentNode) readerContentNode.innerHTML = "";
         document.getElementById("viewLibrary")?.classList.remove("hidden");
@@ -7204,6 +6001,9 @@ https://github.com/nodeca/pako/blob/main/LICENSE
         readestMenuOverlay?.classList.remove("hidden");
         readestMenuPopover?.classList.remove("hidden");
         updateReadestStorageInfo();
+        if (typeof ensureInlinedModulesPreloaded === "function") {
+          ensureInlinedModulesPreloaded();
+        }
       } else {
         readestMenuOverlay?.classList.add("hidden");
         readestMenuPopover?.classList.add("hidden");
@@ -7248,15 +6048,52 @@ https://github.com/nodeca/pako/blob/main/LICENSE
       showToast(isDark ? (currentLang === "es" ? "Tema Claro activado" : "Light theme enabled") : (currentLang === "es" ? "Tema Oscuro activado" : "Dark theme enabled"));
     });
 
+    function toggleAdvSubSection(activeBodyId, activeIconId, activeBtnId) {
+      const sections = [
+        { bodyId: "advBackupSectionBody", iconId: "iconChevronAdvBackup", btnId: "btnToggleAdvBackupSection" },
+        { bodyId: "advAppSectionBody", iconId: "iconChevronAdvApp", btnId: "btnToggleAdvAppSection" },
+        { bodyId: "advDictSectionBody", iconId: "iconChevronAdvDict", btnId: "btnToggleAdvDictSection" }
+      ];
+      const activeBody = document.getElementById(activeBodyId);
+      const willOpen = activeBody ? activeBody.classList.contains("hidden") : false;
+      sections.forEach(sec => {
+        const b = document.getElementById(sec.bodyId);
+        const ic = document.getElementById(sec.iconId);
+        const btn = document.getElementById(sec.btnId);
+        const openThis = sec.bodyId === activeBodyId && willOpen;
+        b?.classList.toggle("hidden", !openThis);
+        ic?.classList.toggle("rotate-90", openThis);
+        if (btn) btn.setAttribute("aria-expanded", openThis ? "true" : "false");
+      });
+    }
+
     safeOn("btnToggleAdvancedSection", "click", () => {
       document.getElementById("readestAdvancedContent")?.classList.toggle("hidden");
       document.getElementById("iconChevronAdvanced")?.classList.toggle("rotate-90");
+      if (typeof ensureInlinedModulesPreloaded === "function") {
+        ensureInlinedModulesPreloaded();
+      }
+    });
+
+    safeOn("btnToggleAdvBackupSection", "click", () => {
+      toggleAdvSubSection("advBackupSectionBody", "iconChevronAdvBackup", "btnToggleAdvBackupSection");
+    });
+
+    safeOn("btnToggleAdvAppSection", "click", () => {
+      toggleAdvSubSection("advAppSectionBody", "iconChevronAdvApp", "btnToggleAdvAppSection");
+      if (typeof ensureInlinedModulesPreloaded === "function") {
+        ensureInlinedModulesPreloaded();
+      }
+    });
+
+    safeOn("btnToggleAdvDictSection", "click", () => {
+      toggleAdvSubSection("advDictSectionBody", "iconChevronAdvDict", "btnToggleAdvDictSection");
     });
 
     function updateReadestStorageInfo(forceDb = false) {
       const span = document.getElementById("readestStorageCount");
       const suffix = isUsingTempMemoryStorage() ? " (RAM)" : "";
-      if (!forceDb && db && Array.isArray(booksList)) {
+      if (!forceDb && window.NyxenStorage.raw.hasDatabase() && Array.isArray(booksList)) {
         if (span) span.textContent = `${booksList.length} ${currentLang === "es" ? "libros" : "books"}${suffix}`;
         return;
       }
@@ -7297,7 +6134,7 @@ https://github.com/nodeca/pako/blob/main/LICENSE
       if (typeof lastSavedProgressState !== "undefined") {
         lastSavedProgressState = { bookId: null, chapter: -1, ratio: -1 };
       }
-      lastHydratedBookId = null;
+      window.NyxenStorage.books.resetHydrationState();
       const rc = document.getElementById("readerContent");
       if (rc) rc.innerHTML = "";
       await dbClear("books");
@@ -7526,12 +6363,153 @@ https://github.com/nodeca/pako/blob/main/LICENSE
     safeOn("btnTempBannerBackup", "click", () => exportBackupPayload({ includeBooks: true }));
 
     let pristineStandaloneHtml = "";
+    let cachedInlinedModulesMap = null;
+    let inlinedModulesPreloadPromise = null;
+    let cachedBundledDefaultCovers = null;
 
-    function capturePristineStandaloneHtml() {
+    function getRequiredExternalModuleScripts() {
+      return Array.from(document.querySelectorAll("script[data-nyxen-module][src]"));
+    }
+
+    function hasCompleteInlinedModules(modulesMap, moduleScripts = getRequiredExternalModuleScripts()) {
+      if (moduleScripts.length === 0) return true;
+      if (!modulesMap || typeof modulesMap.get !== "function") return false;
+      return moduleScripts.every((s) => {
+        const modName = s.getAttribute("data-nyxen-module");
+        const code = modName ? modulesMap.get(modName) : "";
+        return typeof code === "string" && code.length > 0;
+      });
+    }
+
+    async function preloadDefaultCoverDataUrls() {
+      if (cachedBundledDefaultCovers && Object.keys(cachedBundledDefaultCovers).length === 4) {
+        return cachedBundledDefaultCovers;
+      }
+      if (window.NYXEN_BUNDLED_DEFAULT_COVERS && Object.keys(window.NYXEN_BUNDLED_DEFAULT_COVERS).length === 4) {
+        cachedBundledDefaultCovers = window.NYXEN_BUNDLED_DEFAULT_COVERS;
+        return cachedBundledDefaultCovers;
+      }
+      if (window.location.protocol === "file:") return null;
+      const paths = ["/covers/default-1.png", "/covers/default-2.png", "/covers/default-3.png", "/covers/default-4.png"];
+      const loaded = {};
+      await Promise.all(paths.map(async (p) => {
+        try {
+          const url = new URL(p, window.location.href).href;
+          const resp = await fetch(url, { credentials: "same-origin" });
+          if (!resp.ok) return;
+          const blob = await resp.blob();
+          if (!blob || !blob.size) return;
+          const dataUrl = await new Promise((resolve) => {
+            const reader = new FileReader();
+            reader.onloadend = () => resolve(typeof reader.result === "string" ? reader.result : "");
+            reader.onerror = () => resolve("");
+            reader.readAsDataURL(blob);
+          });
+          if (dataUrl && dataUrl.startsWith("data:image/")) {
+            loaded[p] = dataUrl;
+          }
+        } catch (e) {}
+      }));
+      if (Object.keys(loaded).length === paths.length) {
+        cachedBundledDefaultCovers = loaded;
+      }
+      return cachedBundledDefaultCovers;
+    }
+
+    async function collectInlinedModulesMap(options = {}) {
+      const forceRefresh = Boolean(options && options.forceRefresh);
+      const moduleScripts = getRequiredExternalModuleScripts();
+      if (moduleScripts.length === 0) {
+        cachedInlinedModulesMap = new Map();
+        return cachedInlinedModulesMap;
+      }
+      if (!forceRefresh && hasCompleteInlinedModules(cachedInlinedModulesMap, moduleScripts)) {
+        return cachedInlinedModulesMap;
+      }
+      if (!forceRefresh && inlinedModulesPreloadPromise) {
+        return inlinedModulesPreloadPromise;
+      }
+
+      const task = (async () => {
+        const map = new Map();
+        await Promise.all(moduleScripts.map(async (s) => {
+          const modName = s.getAttribute("data-nyxen-module");
+          const src = s.getAttribute("src");
+          if (!modName || !src) return;
+          try {
+            const resolvedSrc = new URL(src, window.location.href).href;
+            const resp = await fetch(resolvedSrc, { credentials: "same-origin" });
+            if (resp.ok) {
+              const code = await resp.text();
+              if (code && !code.trimStart().startsWith("<")) {
+                map.set(modName, code);
+              }
+            }
+          } catch (e) {}
+        }));
+        if (hasCompleteInlinedModules(map, moduleScripts)) {
+          cachedInlinedModulesMap = map;
+        }
+        return map;
+      })();
+
+      inlinedModulesPreloadPromise = task;
+      try {
+        return await task;
+      } finally {
+        if (inlinedModulesPreloadPromise === task) {
+          inlinedModulesPreloadPromise = null;
+        }
+      }
+    }
+
+    function ensureInlinedModulesPreloaded() {
+      const moduleScripts = getRequiredExternalModuleScripts();
+      const coversPromise = preloadDefaultCoverDataUrls().catch(() => null);
+      const modulesPromise = hasCompleteInlinedModules(cachedInlinedModulesMap, moduleScripts)
+        ? Promise.resolve(cachedInlinedModulesMap)
+        : collectInlinedModulesMap().catch(() => null);
+
+      return Promise.all([modulesPromise, coversPromise]).then(([modulesMap]) => {
+        if (hasCompleteInlinedModules(modulesMap, moduleScripts) && !pristineStandaloneHtml) {
+          try {
+            pristineStandaloneHtml = capturePristineStandaloneHtml(modulesMap);
+          } catch (e) {}
+        }
+        return modulesMap;
+      });
+    }
+
+    // Precargar módulos y portadas por defecto al iniciar para que la descarga HTML sea instantánea y síncrona
+    ensureInlinedModulesPreloaded();
+
+    function capturePristineStandaloneHtml(inlinedModulesMap = null) {
       const clone = document.documentElement.cloneNode(true);
       clone.removeAttribute("style");
       clone.querySelectorAll('head link[href^="/"]').forEach(lk => lk.remove());
       clone.querySelectorAll('script[type="module"], script[src^="/@vite"], script[src^="/src/"], script[src*="_aistudio"], script[src*="html2canvas-pro"]').forEach(s => s.remove());
+      if (inlinedModulesMap && inlinedModulesMap.size > 0) {
+        clone.querySelectorAll("script[data-nyxen-module][src]").forEach(s => {
+          const modName = s.getAttribute("data-nyxen-module");
+          const code = modName ? inlinedModulesMap.get(modName) : null;
+          if (code) {
+            s.removeAttribute("src");
+            s.textContent = "\n" + code + "\n";
+          }
+        });
+      }
+      const coverMapForBundle = cachedBundledDefaultCovers || window.NYXEN_BUNDLED_DEFAULT_COVERS;
+      if (coverMapForBundle && Object.keys(coverMapForBundle).length > 0 && !clone.querySelector("#nyxenBundledDefaultCovers")) {
+        const firstModuleScript = clone.querySelector("script[data-nyxen-module], #nyxenBundledJszip");
+        const coverScript = document.createElement("script");
+        coverScript.id = "nyxenBundledDefaultCovers";
+        coverScript.textContent = "\nwindow.NYXEN_BUNDLED_DEFAULT_COVERS = " + JSON.stringify(coverMapForBundle) + ";\n";
+        if (firstModuleScript && firstModuleScript.parentNode) {
+          firstModuleScript.parentNode.insertBefore(coverScript, firstModuleScript);
+        } else {
+          clone.querySelector("body")?.appendChild(coverScript);
+        }
+      }
       clone.querySelectorAll("head style").forEach(st => {
         if ((st.textContent || "").includes(".aistudio-hover-highlight")) st.remove();
       });
@@ -7550,6 +6528,7 @@ https://github.com/nodeca/pako/blob/main/LICENSE
       if (viewLib) viewLib.classList.remove("hidden");
       [
         "#viewReader", "#librarySearchOverlay", "#readestMenuPopover",
+        "#readestAdvancedContent", "#advBackupSectionBody", "#advAppSectionBody", "#advDictSectionBody",
         "#foliateDrawer", "#panelTypography", "#uiSettingsModal",
         "#aboutModal", "#clearConfirmModal", "#proColorPickerModal",
         "#nyxTempStorageBanner", "#readerExternalMediaBar"
@@ -7557,6 +6536,17 @@ https://github.com/nodeca/pako/blob/main/LICENSE
         const el = clone.querySelector(sel);
         if (el) el.classList.add("hidden");
       });
+      ["#iconChevronAdvanced", "#iconChevronAdvBackup", "#iconChevronAdvApp", "#iconChevronAdvDict"].forEach(sel => {
+        const ic = clone.querySelector(sel);
+        if (ic) ic.classList.remove("rotate-90");
+      });
+      ["#btnToggleAdvBackupSection", "#btnToggleAdvAppSection", "#btnToggleAdvDictSection"].forEach(sel => {
+        const btn = clone.querySelector(sel);
+        if (btn) btn.setAttribute("aria-expanded", "false");
+      });
+      clone.setAttribute("data-nyxen-standalone", "1");
+      const dlStandaloneAnchor = clone.querySelector("#btnDownloadStandaloneApp");
+      if (dlStandaloneAnchor) dlStandaloneAnchor.setAttribute("href", "#");
       const libSearchInp = clone.querySelector("#librarySearchInput");
       if (libSearchInp) libSearchInp.setAttribute("value", "");
       return "<!DOCTYPE html>\n" + clone.outerHTML;
@@ -7635,6 +6625,30 @@ https://github.com/nodeca/pako/blob/main/LICENSE
     });
 
     function triggerCrossFrameBlobDownload(contentOrParts, mimeType, filename) {
+      const parts = Array.isArray(contentOrParts) ? contentOrParts : [contentOrParts];
+      const runDownloadInWindow = (win) => {
+        const blob = new win.Blob(parts, { type: mimeType });
+        const url = win.URL.createObjectURL(blob);
+        const a = win.document.createElement("a");
+        a.href = url;
+        a.download = filename;
+        a.rel = "noopener";
+        a.style.display = "none";
+        win.document.body.appendChild(a);
+        a.click();
+        setTimeout(() => {
+          try { if (a.parentNode) a.parentNode.removeChild(a); } catch (err) {}
+          try { win.URL.revokeObjectURL(url); } catch (err) {}
+        }, 15000);
+      };
+
+      try {
+        if (document && document.body) {
+          runDownloadInWindow(window);
+          return;
+        }
+      } catch (localErr) {}
+
       let targetWin = window;
       try {
         if (
@@ -7650,27 +6664,54 @@ https://github.com/nodeca/pako/blob/main/LICENSE
         targetWin = window;
       }
 
-      const parts = Array.isArray(contentOrParts) ? contentOrParts : [contentOrParts];
-      const blob = new targetWin.Blob(parts, { type: mimeType });
-      const url = targetWin.URL.createObjectURL(blob);
-      const a = targetWin.document.createElement("a");
-      a.href = url;
-      a.download = filename;
-      a.style.display = "none";
-      targetWin.document.body.appendChild(a);
-      a.click();
-      targetWin.document.body.removeChild(a);
-      setTimeout(() => {
-        try { targetWin.URL.revokeObjectURL(url); } catch (err) {}
-      }, 3000);
+      runDownloadInWindow(targetWin);
     }
 
-    safeOn("btnDownloadStandaloneApp", "click", () => {
+    async function downloadStandaloneAppAsyncFallback() {
       try {
-        const htmlContent = pristineStandaloneHtml || capturePristineStandaloneHtml();
+        const moduleScripts = getRequiredExternalModuleScripts();
+        const [modulesMap] = await Promise.all([
+          collectInlinedModulesMap({ forceRefresh: true }),
+          preloadDefaultCoverDataUrls().catch(() => null)
+        ]);
+        if (!hasCompleteInlinedModules(modulesMap, moduleScripts)) {
+          throw new Error("Incomplete module preload for standalone HTML export");
+        }
+        const htmlContent = pristineStandaloneHtml || capturePristineStandaloneHtml(modulesMap);
+        pristineStandaloneHtml = htmlContent;
         triggerCrossFrameBlobDownload(htmlContent, "text/html;charset=utf-8", "Nyxen_EPUB_Reader.html");
         toggleReadestMenu(false);
         showToast(currentLang === "es" ? "Descargando Nyxen_EPUB_Reader.html" : "Downloading Nyxen_EPUB_Reader.html");
+      } catch (err) {
+        console.error(err);
+        showToast(currentLang === "es" ? "No se pudo descargar el archivo HTML" : "Could not download HTML file");
+      }
+    }
+
+    safeOn("btnDownloadStandaloneApp", "click", (e) => {
+      const isHttpOrigin = window.location.protocol === "http:" || window.location.protocol === "https:";
+      const isStandaloneFile = document.documentElement.hasAttribute("data-nyxen-standalone") || getRequiredExternalModuleScripts().length === 0;
+      if (isHttpOrigin && !isStandaloneFile && navigator.onLine !== false) {
+        // Dejar que el navegador ejecute la descarga nativa <a href="/__download/Nyxen_EPUB_Reader.html" download="Nyxen_EPUB_Reader.html">
+        setTimeout(() => {
+          toggleReadestMenu(false);
+          showToast(currentLang === "es" ? "Descargando Nyxen_EPUB_Reader.html" : "Downloading Nyxen_EPUB_Reader.html");
+        }, 180);
+        return;
+      }
+
+      if (e && typeof e.preventDefault === "function") e.preventDefault();
+      try {
+        const moduleScripts = getRequiredExternalModuleScripts();
+        if (pristineStandaloneHtml || hasCompleteInlinedModules(cachedInlinedModulesMap, moduleScripts)) {
+          const htmlContent = pristineStandaloneHtml || capturePristineStandaloneHtml(cachedInlinedModulesMap);
+          pristineStandaloneHtml = htmlContent;
+          triggerCrossFrameBlobDownload(htmlContent, "text/html;charset=utf-8", "Nyxen_EPUB_Reader.html");
+          toggleReadestMenu(false);
+          showToast(currentLang === "es" ? "Descargando Nyxen_EPUB_Reader.html" : "Downloading Nyxen_EPUB_Reader.html");
+          return;
+        }
+        downloadStandaloneAppAsyncFallback();
       } catch (err) {
         console.error(err);
         showToast(currentLang === "es" ? "No se pudo descargar el archivo HTML" : "Could not download HTML file");
@@ -7818,6 +6859,26 @@ https://github.com/nodeca/pako/blob/main/LICENSE
               ...(Array.isArray(fb.favoriteChapters) ? fb.favoriteChapters : [])
             ]));
 
+            const sanitizedCover = typeof fb.cover === "string" ? sanitizeCoverUrl(fb.cover) : "";
+            const allowBookExternal = Boolean(fb.allowExternalResources || (existing && existing.allowExternalResources));
+            const sanitizedChapters = fb.chapters.map((ch, chIdx) => {
+              if (!ch || typeof ch !== "object") return ch;
+              return {
+                ...ch,
+                index: typeof ch.index === "number" ? ch.index : chIdx,
+                title: typeof ch.title === "string" ? ch.title : "",
+                href: typeof ch.href === "string" ? ch.href : "",
+                html: typeof ch.html === "string"
+                  ? sanitizeChapterHtmlString(ch.html, { allowExternal: allowBookExternal, lang: currentLang })
+                  : "",
+                isFavorite: Boolean(ch.isFavorite)
+              };
+            });
+            const sanitizedHighlights = Array.from(mergedHighlightsMap.values()).map(h => {
+              if (!h || typeof h !== "object") return h;
+              return { ...h, color: sanitizeCssColor(h.color, "#A3CEF1") };
+            });
+
             const bookRecord = {
               id: fb.id,
               title: fb.title || "Untitled",
@@ -7825,24 +6886,24 @@ https://github.com/nodeca/pako/blob/main/LICENSE
               language: fb.language || "",
               description: fb.description || "",
               tags: Array.isArray(fb.tags) ? normalizeBookTags(fb.tags) : [],
-              cover: typeof fb.cover === "string" ? fb.cover : "",
-              totalChapters: typeof fb.totalChapters === "number" ? fb.totalChapters : fb.chapters.length,
+              cover: sanitizedCover,
+              totalChapters: typeof fb.totalChapters === "number" ? fb.totalChapters : sanitizedChapters.length,
               currentChapter: typeof fb.currentChapter === "number" ? fb.currentChapter : (existing ? existing.currentChapter || 0 : 0),
               chapterScrollRatio: typeof fb.chapterScrollRatio === "number" ? fb.chapterScrollRatio : (existing ? existing.chapterScrollRatio || 0 : 0),
               chapterAnchor: fb.chapterAnchor && typeof fb.chapterAnchor === "object" ? fb.chapterAnchor : (existing ? existing.chapterAnchor || null : null),
               hasStartedReading: Boolean(fb.hasStartedReading || (existing && existing.hasStartedReading)),
-              allowExternalResources: Boolean(fb.allowExternalResources || (existing && existing.allowExternalResources)),
+              allowExternalResources: allowBookExternal,
               status: fb.status || (existing ? existing.status : "Leyendo") || "Leyendo",
               addedAt: fb.addedAt || (existing ? existing.addedAt : Date.now()),
               lastOpenedAt: Math.max(fb.lastOpenedAt || 0, existing ? existing.lastOpenedAt || 0 : 0),
               rating: typeof fb.rating === "number" && fb.rating > 0 ? Math.min(5, Math.max(0.5, Math.round(fb.rating * 2) / 2)) : (existing ? existing.rating || 0 : 0),
               review: typeof fb.review === "string" ? fb.review : (existing ? existing.review || "" : ""),
               reviewedAt: typeof fb.reviewedAt === "number" ? fb.reviewedAt : (existing ? existing.reviewedAt || 0 : 0),
-              highlights: Array.from(mergedHighlightsMap.values()),
+              highlights: sanitizedHighlights,
               chapterWordCounts: Array.isArray(fb.chapterWordCounts) ? fb.chapterWordCounts : undefined,
               favoriteChapters: mergedFavs,
-              chapters: fb.chapters,
-              footnotes: fb.footnotes && typeof fb.footnotes === "object" ? fb.footnotes : {}
+              chapters: sanitizedChapters,
+              footnotes: sanitizeFootnotesMap(fb.footnotes)
             };
             if (Array.isArray(fb.groups)) setBookCollections(bookRecord, fb.groups);
             else if (fb.group) setBookCollections(bookRecord, [fb.group]);
@@ -7858,7 +6919,7 @@ https://github.com/nodeca/pako/blob/main/LICENSE
                     assetKey: ast.assetKey,
                     bookId: fb.id,
                     buffer: bytes.buffer,
-                    mimeType: ast.mimeType || "image/jpeg"
+                    mimeType: normalizeAssetMimeType(ast.mimeType, "image/jpeg")
                   });
                 } catch (decErr) {}
               }
@@ -8226,20 +7287,36 @@ https://github.com/nodeca/pako/blob/main/LICENSE
       "/covers/default-4.png"
     ];
 
-    function getBookFallbackCover(book) {
-      const seed = String((book && (book.id || book.title)) || "nyxen");
-      let hash = 0;
-      for (let i = 0; i < seed.length; i++) {
-        hash = ((hash << 5) - hash + seed.charCodeAt(i)) | 0;
+    function resolveBundledDefaultCoverUrl(coverPath) {
+      if (!coverPath) return "";
+      const bundled = window.NYXEN_BUNDLED_DEFAULT_COVERS || cachedBundledDefaultCovers;
+      if (bundled && bundled[coverPath] && (window.location.protocol === "file:" || window.location.origin === "null")) {
+        return bundled[coverPath];
       }
-      const idx = Math.abs(hash) % DEFAULT_BOOK_COVERS.length;
-      return DEFAULT_BOOK_COVERS[idx];
+      return coverPath;
+    }
+
+    function getBookFallbackCover(book) {
+      const idPart = book && book.id ? String(book.id) : "";
+      const titlePart = book && book.title ? String(book.title) : "";
+      const authorPart = book && book.author ? String(book.author) : "";
+      const seed = `${idPart}|${titlePart}|${authorPart}` || "nyxen";
+      let hash = 2166136261;
+      for (let i = 0; i < seed.length; i++) {
+        hash ^= seed.charCodeAt(i);
+        hash = Math.imul(hash, 16777619);
+      }
+      const idx = (hash >>> 0) % DEFAULT_BOOK_COVERS.length;
+      return resolveBundledDefaultCoverUrl(DEFAULT_BOOK_COVERS[idx]);
     }
 
     function getBookCoverUrl(book) {
       if (!book || !book.cover || typeof book.cover !== "string") return "";
-      const raw = book.cover.trim();
+      const raw = sanitizeCoverUrl(book.cover);
       if (!raw) return "";
+      if (DEFAULT_BOOK_COVERS.includes(raw)) {
+        return resolveBundledDefaultCoverUrl(raw);
+      }
       if (!raw.startsWith("data:")) return raw;
       const sig = `${raw.length}:${raw.slice(0, 48)}`;
       const cached = coverObjectUrlCache.get(book.id);
@@ -8249,7 +7326,7 @@ https://github.com/nodeca/pako/blob/main/LICENSE
         const commaIdx = raw.indexOf(",");
         if (commaIdx !== -1 && raw.slice(0, commaIdx).includes(";base64")) {
           const mimeMatch = raw.slice(5, commaIdx).match(/^([^;]+)/);
-          const mime = mimeMatch ? mimeMatch[1] : "image/jpeg";
+          const mime = normalizeAssetMimeType(mimeMatch ? mimeMatch[1] : "image/jpeg", "image/jpeg");
           const binStr = atob(raw.slice(commaIdx + 1));
           const len = binStr.length;
           const bytes = new Uint8Array(len);
@@ -8525,7 +7602,7 @@ https://github.com/nodeca/pako/blob/main/LICENSE
         const isCompleted = book.status === "Terminado" || displayPct >= 100;
         const coverUrl = getBookDisplayCoverUrl(book);
 
-        const coverHtml = `<img src="${coverUrl}" class="w-full h-full object-cover" loading="lazy" decoding="async">`;
+        const coverHtml = `<img src="${escapeHtml(coverUrl)}" class="w-full h-full object-cover" loading="lazy" decoding="async">`;
 
         const libStatusDotColor = book.status === "Terminado"
           ? (isLightTheme ? "#059669" : "#34D399")
@@ -9848,12 +8925,14 @@ https://github.com/nodeca/pako/blob/main/LICENSE
         }
       }
 
-      const temp = document.createElement("div");
-      temp.innerHTML = processed;
-      sanitizeEpubDom(temp, { allowExternal });
+      const parsedDoc = parseUntrustedHtml(processed);
+      const temp = parsedDoc && parsedDoc.body ? parsedDoc.body : document.createElement("div");
+      if (!parsedDoc || !parsedDoc.body) temp.innerHTML = processed;
+      const ownerDoc = temp.ownerDocument || document;
+      const sanitizeStats = sanitizeEpubDom(temp, { allowExternal, lang: currentLang }) || {};
       stripLeadingChapterHeaderFromDom(temp, chapterTitle);
 
-      let blockedExternalCount = 0;
+      let blockedExternalCount = sanitizeStats.blockedNonImgExternalCount || 0;
       const supTextNodes = [];
       const hasUnicodeSup = /[¹²³⁴⁵⁶⁷⁸⁹⁰]/.test(processed);
       const walkFilter = hasUnicodeSup ? (NodeFilter.SHOW_ELEMENT | NodeFilter.SHOW_TEXT) : NodeFilter.SHOW_ELEMENT;
@@ -9877,7 +8956,7 @@ https://github.com/nodeca/pako/blob/main/LICENSE
           const blockedUrl = el.getAttribute("data-nyx-blocked-src") || "";
           const rawUrl = blockedUrl || el.getAttribute("src") || el.getAttribute("xlink:href") || el.getAttribute("href") || "";
           if (rawUrl && isExternalMediaUrl(rawUrl)) {
-            if (allowExternal) {
+            if (allowExternal && isSafeHttpUrl(rawUrl)) {
               if (tag === "IMAGE") {
                 el.setAttribute("xlink:href", rawUrl);
                 el.setAttribute("href", rawUrl);
@@ -9887,10 +8966,15 @@ https://github.com/nodeca/pako/blob/main/LICENSE
               el.removeAttribute("data-nyx-blocked-src");
               el.removeAttribute("data-nyx-blocked-badge");
             } else {
-              el.setAttribute("data-nyx-blocked-src", rawUrl);
-              el.setAttribute("data-nyx-blocked-badge", "1");
-              if (!el.getAttribute("alt")) {
-                el.setAttribute("alt", currentLang === "es" ? "Imagen externa bloqueada" : "Blocked external image");
+              if (isSafeHttpUrl(rawUrl)) {
+                el.setAttribute("data-nyx-blocked-src", rawUrl.trim());
+                el.setAttribute("data-nyx-blocked-badge", "1");
+                if (!el.getAttribute("alt")) {
+                  el.setAttribute("alt", currentLang === "es" ? "Imagen externa bloqueada" : "Blocked external image");
+                }
+              } else {
+                el.removeAttribute("data-nyx-blocked-src");
+                el.removeAttribute("data-nyx-blocked-badge");
               }
               el.removeAttribute("src");
               el.removeAttribute("href");
@@ -9967,26 +9051,27 @@ https://github.com/nodeca/pako/blob/main/LICENSE
         const val = tNode.nodeValue;
         const parts = val.split(/([¹²³⁴⁵⁶⁷⁸⁹⁰]+)/g);
         if (parts.length <= 1) continue;
-        const frag = document.createDocumentFragment();
+        const frag = ownerDoc.createDocumentFragment();
         for (let j = 0; j < parts.length; j++) {
           const part = parts[j];
           if (!part) continue;
           if (/^[¹²³⁴⁵⁶⁷⁸⁹⁰]+$/.test(part)) {
             let num = "";
             for (let k = 0; k < part.length; k++) num += (UNICODE_SUP_MAP[part[k]] || part[k]);
-            const sup = document.createElement("sup");
+            const sup = ownerDoc.createElement("sup");
             sup.className = "footnote-marker";
             sup.setAttribute("data-fn-num", num);
             sup.textContent = part;
             frag.appendChild(sup);
           } else {
-            frag.appendChild(document.createTextNode(part));
+            frag.appendChild(ownerDoc.createTextNode(part));
           }
         }
         tNode.parentNode?.replaceChild(frag, tNode);
       }
 
       const resultHtml = temp.innerHTML;
+      temp.innerHTML = "";
       if (chapterObj && typeof chapterObj === "object") {
         cleanedChapterCache.set(chapterObj, {
           len: processed.length,
@@ -11309,7 +10394,9 @@ https://github.com/nodeca/pako/blob/main/LICENSE
             popup.classList.add("hidden");
             const hashId = href.split("#")[1];
             const readerRoot = document.getElementById("readerContent");
-            const safeHash = CSS.escape ? CSS.escape(hashId) : hashId;
+            const safeHash = typeof CSS !== "undefined" && CSS.escape
+              ? CSS.escape(hashId)
+              : String(hashId).replace(/([^\w-])/g, "\\$1");
             const el = readerRoot ? readerRoot.querySelector(`#${safeHash}`) : null;
             if (el) el.scrollIntoView({ behavior: "smooth", block: "center" });
           };
@@ -11639,14 +10726,16 @@ https://github.com/nodeca/pako/blob/main/LICENSE
 
       const colorPrefix = I18N[currentLang]?.filterColorPrefix || (currentLang === "es" ? "Color" : "Color");
       mergedColors.forEach(col => {
+        const safeCol = sanitizeCssColor(col, "");
+        if (!safeCol) return;
         const btn = document.createElement("button");
         btn.type = "button";
-        const isSel = annotationFilters.color.toLowerCase() === String(col).toLowerCase();
-        btn.dataset.color = col;
+        const isSel = annotationFilters.color.toLowerCase() === String(safeCol).toLowerCase();
+        btn.dataset.color = safeCol;
         btn.className = "filter-color-btn w-6 h-6 rounded-full border border-black/20 flex-shrink-0 transition";
-        btn.style.backgroundColor = col;
+        btn.style.backgroundColor = safeCol;
         btn.style.boxShadow = isSel ? "0 0 0 2px var(--app-surface), 0 0 0 3.5px var(--app-accent)" : "none";
-        btn.setAttribute("aria-label", `${colorPrefix} ${col}`);
+        btn.setAttribute("aria-label", `${colorPrefix} ${safeCol}`);
         btn.addEventListener("click", () => {
           annotationFilters.color = col;
           syncAnnotationFilterColors();
@@ -11879,7 +10968,7 @@ https://github.com/nodeca/pako/blob/main/LICENSE
             </div>
 
             <div class="flex items-stretch gap-3">
-              <div class="w-[3.5px] rounded-full flex-shrink-0" style="background-color: ${hl.color || 'var(--app-accent)'};"></div>
+              <div class="w-[3.5px] rounded-full flex-shrink-0" style="background-color: ${sanitizeCssColor(hl.color, 'var(--app-accent)')};"></div>
               <p class="text-xs italic leading-relaxed flex-1 break-words font-medium whitespace-pre-line" style="color: ${quoteTextColor} !important;">${escapeHtml(hl.text)}</p>
             </div>
 
@@ -12270,12 +11359,16 @@ https://github.com/nodeca/pako/blob/main/LICENSE
       const spacedHtml = String(rawHtml)
         .replace(/<\/(p|div|li|h[1-6]|blockquote|tr|td|th|section|article)>/gi, "</$1> ")
         .replace(/<br\s*\/?>/gi, " ");
-      const temp = document.createElement("div");
-      temp.innerHTML = spacedHtml;
+      const parsedDoc = parseUntrustedHtml(spacedHtml);
+      const temp = parsedDoc && parsedDoc.body ? parsedDoc.body : document.createElement("div");
+      if (!parsedDoc || !parsedDoc.body) temp.innerHTML = spacedHtml;
+      temp.querySelectorAll("script, style, noscript, template").forEach(el => el.remove());
       if (chapterTitle) {
         stripLeadingChapterHeaderFromDom(temp, chapterTitle);
       }
-      return (temp.textContent || "").replace(/\s+/g, " ").trim();
+      const txt = (temp.textContent || "").replace(/\s+/g, " ").trim();
+      temp.innerHTML = "";
+      return txt;
     }
 
     function getCachedChapterSearchData(ch) {
@@ -13228,11 +12321,11 @@ https://github.com/nodeca/pako/blob/main/LICENSE
           }
         }
 
-        // Interceptar enlaces internos entre capítulos (<a href="...">) para evitar salir de la app o errores 404
-        const anyAnchor = e.target.closest("a[href]");
-        if (anyAnchor) {
+        // Interceptar enlaces internos entre capítulos (<a href="..."> / SVG xlink:href) para evitar salir de la app o errores 404
+        const anyAnchor = e.target.closest("a[href], a");
+        if (anyAnchor && (anyAnchor.hasAttribute("href") || anyAnchor.hasAttribute("xlink:href"))) {
           e.preventDefault();
-          const rawHref = (anyAnchor.getAttribute("href") || "").trim();
+          const rawHref = (anyAnchor.getAttribute("href") || anyAnchor.getAttribute("xlink:href") || "").trim();
           if (rawHref && !rawHref.startsWith("http") && !rawHref.startsWith("mailto:") && currentBook && Array.isArray(currentBook.chapters)) {
             const cleanTarget = rawHref.split("#")[0].split("?")[0].split("/").pop()?.toLowerCase();
             if (cleanTarget) {
@@ -14611,8 +13704,9 @@ https://github.com/nodeca/pako/blob/main/LICENSE
       }
 
       const cleaned = cleanChapterHtml(rawHtml, chTitle, ch);
-      const temp = document.createElement("div");
-      temp.innerHTML = cleaned;
+      const parsedDoc = parseUntrustedHtml(cleaned);
+      const temp = parsedDoc && parsedDoc.body ? parsedDoc.body : document.createElement("div");
+      if (!parsedDoc || !parsedDoc.body) temp.innerHTML = cleaned;
       temp.querySelectorAll(".hl-note-indicator, .reader-chapter-title, script, style").forEach(el => el.remove());
 
       const blocks = [];
@@ -14631,6 +13725,7 @@ https://github.com/nodeca/pako/blob/main/LICENSE
           });
         }
       }
+      temp.innerHTML = "";
       quoteChapterParasCache.set(ch, { len: rawHtml.length, title: chTitle, override: shouldOverride, blocks });
       return blocks;
     }
@@ -17341,7 +16436,7 @@ https://github.com/nodeca/pako/blob/main/LICENSE
         updateReadestStorageInfo();
         await showView("library", { skipDbFetch: true });
 
-        if (dbInitBlocked) {
+        if (window.NyxenStorage.raw.isBlocked()) {
           showToast(
             currentLang === "es"
               ? "Base de datos bloqueada: modo temporal en RAM (se perderá al cerrar)"
