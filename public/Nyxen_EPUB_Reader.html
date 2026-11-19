@@ -5849,6 +5849,9 @@ https://github.com/nodeca/pako/blob/main/LICENSE
     async function showView(viewName, readerOptions = {}) {
       if (viewName !== "reader" && !document.getElementById("viewReader")?.classList.contains("hidden")) {
         flushPendingReaderProgress();
+        if (typeof cancelReaderLayoutStabilization === "function") {
+          cancelReaderLayoutStabilization({ resetStableState: true });
+        }
       }
       if (viewName !== "detail" && !document.getElementById("viewStoryDetail")?.classList.contains("hidden") && typeof flushPendingDetailReview === "function") {
         flushPendingDetailReview();
@@ -5864,6 +5867,9 @@ https://github.com/nodeca/pako/blob/main/LICENSE
       document.getElementById("viewReader")?.classList.add("hidden");
 
       if (viewName === "library") {
+        if (typeof cancelReaderLayoutStabilization === "function") {
+          cancelReaderLayoutStabilization({ resetStableState: true });
+        }
         if (typeof resetDrawerSearchState === "function") resetDrawerSearchState({ clearInput: true });
         window.NyxenStorage.books.releaseLastHydratedBook();
         const readerContentNode = document.getElementById("readerContent");
@@ -5872,6 +5878,9 @@ https://github.com/nodeca/pako/blob/main/LICENSE
         syncBrowserThemeColor(appConfig.bg);
         await renderLibrary({ skipDbFetch: Boolean(readerOptions.skipDbFetch) });
       } else if (viewName === "detail") {
+        if (typeof cancelReaderLayoutStabilization === "function") {
+          cancelReaderLayoutStabilization({ resetStableState: true });
+        }
         syncBrowserThemeColor(appConfig.bg);
         if (currentBook) {
           await ensureBookHydrated(currentBook);
@@ -9435,16 +9444,284 @@ https://github.com/nodeca/pako/blob/main/LICENSE
     let readerRenderToken = 0;
     const dismissedExternalMediaBookIds = new Set();
 
+    let _anchorGraphemeSegmenter = null;
+    function getAnchorGraphemeSegmenter() {
+      if (_anchorGraphemeSegmenter === null) {
+        _anchorGraphemeSegmenter = (typeof Intl !== "undefined" && typeof Intl.Segmenter === "function")
+          ? new Intl.Segmenter(undefined, { granularity: "grapheme" })
+          : false;
+      }
+      return _anchorGraphemeSegmenter || null;
+    }
+
+    function isAnchorCombiningOrJoiner(code) {
+      return (
+        (code >= 0x0300 && code <= 0x036f) ||
+        (code >= 0x1ab0 && code <= 0x1aff) ||
+        (code >= 0x1dc0 && code <= 0x1dff) ||
+        (code >= 0x20d0 && code <= 0x20ff) ||
+        (code >= 0xfe00 && code <= 0xfe0f) ||
+        (code >= 0xfe20 && code <= 0xfe2f) ||
+        code === 0x200d
+      );
+    }
+
+    function getAnchorGraphemeBoundsAt(str, pos) {
+      const s = String(str || "");
+      const len = s.length;
+      if (len === 0) return { start: 0, end: 0 };
+      const p = Math.max(0, Math.min(len - 1, pos));
+      const segmenter = getAnchorGraphemeSegmenter();
+      if (segmenter) {
+        const winStart = Math.max(0, p - 24);
+        const winEnd = Math.min(len, p + 24);
+        const sub = s.slice(winStart, winEnd);
+        for (const seg of segmenter.segment(sub)) {
+          const absStart = winStart + seg.index;
+          const absEnd = absStart + seg.segment.length;
+          if (p >= absStart && p < absEnd) {
+            return { start: absStart, end: absEnd };
+          }
+        }
+      }
+      let start = p;
+      const cAt = s.charCodeAt(start);
+      if (cAt >= 0xdc00 && cAt <= 0xdfff && start > 0) {
+        const prev = s.charCodeAt(start - 1);
+        if (prev >= 0xd800 && prev <= 0xdbff) start--;
+      }
+      while (start > 0 && isAnchorCombiningOrJoiner(s.charCodeAt(start))) {
+        start--;
+        if (start > 0) {
+          const sc = s.charCodeAt(start);
+          if (sc >= 0xdc00 && sc <= 0xdfff) {
+            const hi = s.charCodeAt(start - 1);
+            if (hi >= 0xd800 && hi <= 0xdbff) start--;
+          }
+        }
+      }
+      let end = start + 1;
+      if (end < len) {
+        const hi = s.charCodeAt(start);
+        const lo = s.charCodeAt(end);
+        if (hi >= 0xd800 && hi <= 0xdbff && lo >= 0xdc00 && lo <= 0xdfff) end++;
+      }
+      while (end < len && isAnchorCombiningOrJoiner(s.charCodeAt(end))) {
+        const wasZwj = s.charCodeAt(end) === 0x200d;
+        end++;
+        if (wasZwj && end < len) {
+          end++;
+          if (end < len) {
+            const hi = s.charCodeAt(end - 1);
+            const lo = s.charCodeAt(end);
+            if (hi >= 0xd800 && hi <= 0xdbff && lo >= 0xdc00 && lo <= 0xdfff) end++;
+          }
+        }
+      }
+      return { start, end: Math.min(len, end) };
+    }
+
+    function snapAnchorOffsetLeft(str, idx) {
+      const s = String(str || "");
+      if (idx <= 0) return 0;
+      if (idx >= s.length) return s.length;
+      return getAnchorGraphemeBoundsAt(s, idx).start;
+    }
+
+    function snapAnchorOffsetRight(str, idx) {
+      const s = String(str || "");
+      if (idx <= 0) return 0;
+      if (idx >= s.length) return s.length;
+      const b = getAnchorGraphemeBoundsAt(s, idx);
+      return idx === b.start ? idx : b.end;
+    }
+
+    function safeAnchorUnicodeSlice(str, start, end) {
+      const s = String(str || "");
+      if (!s) return "";
+      const clampedStart = Math.max(0, Math.min(s.length, start || 0));
+      const clampedEnd = Math.max(clampedStart, Math.min(s.length, end == null ? s.length : end));
+      if (clampedStart >= clampedEnd) return "";
+      const sOff = snapAnchorOffsetLeft(s, clampedStart);
+      let eOff = snapAnchorOffsetRight(s, clampedEnd);
+      if (eOff > s.length) eOff = s.length;
+      return s.slice(sOff, eOff);
+    }
+
+    function normalizeAnchorText(str) {
+      return String(str || "").replace(/\s+/g, " ").trim();
+    }
+
+    function getAnchorNormCharRect(indexData, pos) {
+      if (!indexData || !indexData.normText || pos < 0 || pos >= indexData.normText.length) return null;
+      const bounds = getAnchorGraphemeBoundsAt(indexData.normText, pos);
+      const startEntry = resolveCharMapPos(indexData, bounds.start);
+      const endEntry = resolveCharMapPos(indexData, Math.max(bounds.start, bounds.end - 1));
+      if (!startEntry || !endEntry || !startEntry.node || !endEntry.node) return null;
+      const endLen = (endEntry.node.nodeValue || "").length;
+      if (endLen <= 0) return null;
+      const endOffset = Math.min(endLen, endEntry.offset + 1);
+      if (startEntry.node === endEntry.node && endOffset <= startEntry.offset) return null;
+      try {
+        const range = document.createRange();
+        range.setStart(startEntry.node, Math.max(0, Math.min((startEntry.node.nodeValue || "").length, startEntry.offset)));
+        range.setEnd(endEntry.node, endOffset);
+        if (typeof range.getClientRects === "function") {
+          const rects = range.getClientRects();
+          for (let i = 0; i < rects.length; i++) {
+            const r = rects[i];
+            if (r && (r.width > 0 || r.height > 0)) return r;
+          }
+        }
+        const rect = range.getBoundingClientRect();
+        if (rect && (rect.width > 0 || rect.height > 0)) return rect;
+      } catch (e) {}
+      return null;
+    }
+
+    function findVisibleCharOffsetInBlock(blockIndex, targetY) {
+      const text = blockIndex && blockIndex.normText ? blockIndex.normText : "";
+      if (!text) return 0;
+
+      // Collect non-whitespace grapheme start indices only when needed via binary probing
+      const findNearestNonSpace = (idx, loBound, hiBound) => {
+        if (idx >= loBound && idx <= hiBound && text[idx] !== " ") {
+          return getAnchorGraphemeBoundsAt(text, idx).start;
+        }
+        let step = 1;
+        while (idx - step >= loBound || idx + step <= hiBound) {
+          if (idx + step <= hiBound && text[idx + step] !== " ") {
+            return getAnchorGraphemeBoundsAt(text, idx + step).start;
+          }
+          if (idx - step >= loBound && text[idx - step] !== " ") {
+            return getAnchorGraphemeBoundsAt(text, idx - step).start;
+          }
+          step++;
+        }
+        return -1;
+      };
+
+      let lo = 0;
+      let hi = text.length - 1;
+      let bestPos = -1;
+      while (lo <= hi) {
+        const mid = (lo + hi) >> 1;
+        const probe = findNearestNonSpace(mid, lo, hi);
+        if (probe === -1) break;
+        const rect = getAnchorNormCharRect(blockIndex, probe);
+        if (!rect) {
+          if (probe < hi) {
+            lo = probe + 1;
+          } else {
+            hi = probe - 1;
+          }
+          continue;
+        }
+        if (rect.bottom > targetY + 1) {
+          bestPos = probe;
+          hi = probe - 1;
+        } else {
+          lo = getAnchorGraphemeBoundsAt(text, probe).end;
+        }
+      }
+
+      if (bestPos === -1) return 0;
+
+      // Local refine backward up to 96 chars to ensure we hit the very first glyph of the visible line
+      let cursor = bestPos;
+      let steps = 0;
+      while (cursor > 0 && steps < 96) {
+        let prevIdx = cursor - 1;
+        while (prevIdx >= 0 && text[prevIdx] === " ") prevIdx--;
+        if (prevIdx < 0) break;
+        const prevBounds = getAnchorGraphemeBoundsAt(text, prevIdx);
+        const prevRect = getAnchorNormCharRect(blockIndex, prevBounds.start);
+        if (prevRect && prevRect.bottom > targetY + 1) {
+          cursor = prevBounds.start;
+          steps++;
+        } else {
+          break;
+        }
+      }
+
+      return snapAnchorOffsetLeft(text, cursor);
+    }
+
+    function hasDirectAnchorInlineText(el, childBlockSelector) {
+      const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT, {
+        acceptNode: (node) => {
+          const val = node.nodeValue || "";
+          if (!val.trim()) return NodeFilter.FILTER_REJECT;
+          let p = node.parentElement;
+          while (p && p !== el) {
+            if (p.classList.contains("reader-chapter-title") || p.classList.contains("hl-note-indicator")) {
+              return NodeFilter.FILTER_REJECT;
+            }
+            if (p.matches && p.matches(childBlockSelector)) {
+              return NodeFilter.FILTER_REJECT;
+            }
+            p = p.parentElement;
+          }
+          return NodeFilter.FILTER_ACCEPT;
+        }
+      });
+      return Boolean(walker.nextNode());
+    }
+
     function getReaderAnchorBlocks() {
       const content = document.getElementById("readerContent");
       if (!content) return [];
-      const raw = content.querySelectorAll("p, h1, h2, h3, h4, h5, h6, li, blockquote, pre, figure, img");
+      const BLOCK_CANDIDATE_SEL = "p, h1, h2, h3, h4, h5, h6, li, blockquote, pre, figure, dt, dd, tr, div, section, article, img, svg";
+      const NESTED_BLOCK_SEL = "p, h1, h2, h3, h4, h5, h6, li, blockquote, pre, figure, dt, dd, tr, div, section, article";
+      const CONTAINER_TAGS = new Set(["DIV", "SECTION", "ARTICLE", "BLOCKQUOTE", "LI", "FIGURE", "TR", "DD"]);
+      const raw = content.querySelectorAll(BLOCK_CANDIDATE_SEL);
+      const contentRect = content.getBoundingClientRect ? content.getBoundingClientRect() : null;
+      const checkVisibleGeometry = Boolean(contentRect && contentRect.height > 0);
       const out = [];
+
       for (let i = 0; i < raw.length; i++) {
         const el = raw[i];
-        if (el.classList.contains("reader-chapter-title")) continue;
-        if (el.tagName === "IMG" && el.closest("p, figure, blockquote, li")) continue;
+        if (el.classList.contains("reader-chapter-title") || el.classList.contains("hl-note-indicator")) continue;
+        if (el.closest(".reader-chapter-title, .hl-note-indicator, [data-search-flash]")) continue;
+
+        const tag = el.tagName;
+        if (tag === "IMG" || tag === "SVG") {
+          const enclosing = el.closest("p, h1, h2, h3, h4, h5, h6, li, blockquote, pre, figure, dt, dd, tr");
+          if (enclosing && content.contains(enclosing) && !enclosing.closest(".reader-chapter-title, .hl-note-indicator")) {
+            continue;
+          }
+        }
+
+        if (checkVisibleGeometry && typeof el.getBoundingClientRect === "function") {
+          const rect = el.getBoundingClientRect();
+          if (rect.height < 0.5 && rect.width < 0.5) continue;
+        }
+
+        const hasMedia = tag === "IMG" || tag === "SVG" || Boolean(el.querySelector("img, svg"));
+        const rawText = (el.textContent || "").trim();
+        if (!rawText && !hasMedia) continue;
+
+        if (CONTAINER_TAGS.has(tag)) {
+          const nestedBlocks = el.querySelectorAll(NESTED_BLOCK_SEL);
+          let hasMeaningfulNested = false;
+          for (let j = 0; j < nestedBlocks.length; j++) {
+            const nb = nestedBlocks[j];
+            if (nb.closest(".reader-chapter-title, .hl-note-indicator")) continue;
+            if ((nb.textContent || "").trim().length > 0 || nb.querySelector("img, svg")) {
+              hasMeaningfulNested = true;
+              break;
+            }
+          }
+          if (hasMeaningfulNested && !hasDirectAnchorInlineText(el, NESTED_BLOCK_SEL)) {
+            continue;
+          }
+        }
+
         out.push(el);
+      }
+
+      if (out.length === 0 && (content.textContent || "").trim().length > 0) {
+        return [content];
       }
       return out;
     }
@@ -9452,35 +9729,243 @@ https://github.com/nodeca/pako/blob/main/LICENSE
     function captureReaderScrollAnchor() {
       const scrollAreaEl = document.getElementById("readerScrollArea");
       const readerView = document.getElementById("viewReader");
+      const content = document.getElementById("readerContent");
       if (!scrollAreaEl || !readerView || readerView.classList.contains("hidden")) return null;
-      if (scrollAreaEl.scrollTop <= 4) {
-        return { blockIdx: 0, textSample: "", blockProgress: 0 };
-      }
       const blocks = getReaderAnchorBlocks();
       if (blocks.length === 0) return null;
+      if (scrollAreaEl.scrollTop <= 4) {
+        return {
+          v: 2,
+          blockIdx: 0,
+          textSample: "",
+          blockProgress: 0,
+          blockCharOffset: 0,
+          visibleSnippet: "",
+          contextBefore: "",
+          contextAfter: "",
+          chapterCharOffset: 0,
+          chapterTextLen: 0,
+          blockTag: "",
+          preBlockGap: 0
+        };
+      }
       const scrollRect = scrollAreaEl.getBoundingClientRect();
-      const targetY = scrollRect.top + 10;
+      const targetY = scrollRect.top + 8;
+
+      let chosenIdx = -1;
       for (let i = 0; i < blocks.length; i++) {
-        const el = blocks[i];
-        const bRect = el.getBoundingClientRect();
-        if (bRect.bottom > targetY) {
-          const blockH = Math.max(1, bRect.height);
-          const blockProgress = Math.max(0, Math.min(1, (scrollRect.top - bRect.top) / blockH));
-          const textSample = (el.textContent || "").replace(/\s+/g, " ").trim().slice(0, 64);
-          return {
-            blockIdx: i,
-            textSample,
-            blockProgress: Number(blockProgress.toFixed(4))
-          };
+        const bRect = blocks[i].getBoundingClientRect();
+        if (bRect.bottom > targetY + 1) {
+          chosenIdx = i;
+          // If chosen block wraps nested blocks, prefer deepest child crossing targetY
+          for (let j = i + 1; j < blocks.length; j++) {
+            if (!blocks[i].contains(blocks[j])) break;
+            const cRect = blocks[j].getBoundingClientRect();
+            if (cRect.top <= targetY + 4 && cRect.bottom > targetY + 1) {
+              chosenIdx = j;
+            }
+          }
+          break;
         }
       }
-      const lastIdx = blocks.length - 1;
-      const lastText = (blocks[lastIdx].textContent || "").replace(/\s+/g, " ").trim().slice(0, 64);
-      return { blockIdx: lastIdx, textSample: lastText, blockProgress: 1 };
+
+      if (chosenIdx === -1) {
+        chosenIdx = blocks.length - 1;
+      }
+
+      const el = blocks[chosenIdx];
+      const bRect = el.getBoundingClientRect();
+      const blockH = Math.max(1, bRect.height);
+      const isAtLastFallback = chosenIdx === blocks.length - 1 && bRect.bottom <= targetY + 1;
+      const preBlockGap = (chosenIdx === 0 && bRect.top > targetY + 2) ? Math.round(bRect.top - targetY) : 0;
+      const blockProgress = isAtLastFallback
+        ? 1
+        : (preBlockGap > 0 ? 0 : Math.max(0, Math.min(1, (targetY - bRect.top) / blockH)));
+
+      const blockIndex = buildChapterTextIndex(el, null, { collectMap: true });
+      const blockText = blockIndex.normText || "";
+      const textSample = safeAnchorUnicodeSlice(blockText, 0, 64);
+
+      let blockCharOffset = 0;
+      let visibleSnippet = "";
+      let contextBefore = "";
+      let contextAfter = "";
+      let chapterCharOffset = 0;
+      let chapterTextLen = 0;
+
+      if (blockText.length > 0 && preBlockGap === 0) {
+        blockCharOffset = isAtLastFallback
+          ? Math.max(0, snapAnchorOffsetLeft(blockText, Math.max(0, blockText.length - 32)))
+          : findVisibleCharOffsetInBlock(blockIndex, targetY);
+
+        visibleSnippet = safeAnchorUnicodeSlice(blockText, blockCharOffset, blockCharOffset + 40).trim();
+        if (!visibleSnippet && blockCharOffset > 0) {
+          blockCharOffset = snapAnchorOffsetLeft(blockText, Math.max(0, blockText.length - 24));
+          visibleSnippet = safeAnchorUnicodeSlice(blockText, blockCharOffset, blockCharOffset + 40).trim();
+        }
+
+        const startEntry = resolveCharMapPos(blockIndex, blockCharOffset);
+        if (content && startEntry && startEntry.node) {
+          try {
+            const stopRange = document.createRange();
+            const safeOff = Math.max(0, Math.min((startEntry.node.nodeValue || "").length, startEntry.offset));
+            stopRange.setStart(startEntry.node, safeOff);
+            stopRange.collapse(true);
+            const beforeData = buildChapterTextIndex(content, stopRange, { collectMap: false });
+            const fullData = buildChapterTextIndex(content, null, { collectMap: false });
+            const beforeText = beforeData.normText || "";
+            const fullText = fullData.normText || "";
+            chapterTextLen = fullText.length;
+
+            let cOff = beforeText.length;
+            if (visibleSnippet) {
+              if (fullText.startsWith(visibleSnippet, cOff)) {
+                chapterCharOffset = cOff;
+              } else if (cOff + 1 < fullText.length && fullText[cOff] === " " && fullText.startsWith(visibleSnippet, cOff + 1)) {
+                chapterCharOffset = cOff + 1;
+              } else {
+                chapterCharOffset = Math.min(fullText.length, cOff);
+              }
+            } else {
+              chapterCharOffset = Math.min(fullText.length, cOff);
+            }
+
+            if (chapterCharOffset > 0) {
+              contextBefore = safeAnchorUnicodeSlice(fullText, Math.max(0, chapterCharOffset - 32), chapterCharOffset);
+            }
+            const afterStart = Math.min(fullText.length, chapterCharOffset + visibleSnippet.length);
+            contextAfter = safeAnchorUnicodeSlice(fullText, afterStart, Math.min(fullText.length, afterStart + 32));
+          } catch (e) {
+            if (blockCharOffset > 0) {
+              contextBefore = safeAnchorUnicodeSlice(blockText, Math.max(0, blockCharOffset - 32), blockCharOffset);
+            }
+            const afterStart = Math.min(blockText.length, blockCharOffset + visibleSnippet.length);
+            contextAfter = safeAnchorUnicodeSlice(blockText, afterStart, Math.min(blockText.length, afterStart + 32));
+          }
+        }
+      }
+
+      return {
+        v: 2,
+        blockIdx: chosenIdx,
+        textSample,
+        blockProgress: Number(blockProgress.toFixed(4)),
+        blockCharOffset,
+        visibleSnippet,
+        contextBefore,
+        contextAfter,
+        chapterCharOffset,
+        chapterTextLen,
+        blockTag: el.tagName || "",
+        preBlockGap
+      };
+    }
+
+    function scoreAnchorContextMatch(chapterText, pos, snippetLen, ctxBefore, ctxAfter) {
+      let score = 0;
+      let matchedParts = 0;
+      if (ctxBefore) {
+        const actualBefore = chapterText.slice(Math.max(0, pos - ctxBefore.length), pos);
+        let common = 0;
+        const maxLen = Math.min(actualBefore.length, ctxBefore.length);
+        while (common < maxLen && actualBefore[actualBefore.length - 1 - common] === ctxBefore[ctxBefore.length - 1 - common]) {
+          common++;
+        }
+        if (common >= Math.min(6, ctxBefore.length)) {
+          score += common;
+          matchedParts++;
+        }
+      }
+      if (ctxAfter) {
+        const afterStart = pos + snippetLen;
+        const actualAfter = chapterText.slice(afterStart, afterStart + ctxAfter.length);
+        let common = 0;
+        const maxLen = Math.min(actualAfter.length, ctxAfter.length);
+        while (common < maxLen && actualAfter[common] === ctxAfter[common]) {
+          common++;
+        }
+        if (common >= Math.min(6, ctxAfter.length)) {
+          score += common;
+          matchedParts++;
+        }
+      }
+      return { score, matchedParts };
+    }
+
+    function findConfidentChapterSnippetPos(chapterText, anchor) {
+      const snippet = String(anchor.visibleSnippet || "").trim();
+      if (!chapterText || snippet.length < 4) return -1;
+
+      const ctxBefore = String(anchor.contextBefore || "");
+      const ctxAfter = String(anchor.contextAfter || "");
+      const hasAnyCtx = ctxBefore.length >= 4 || ctxAfter.length >= 4;
+
+      const collectPositions = (needle) => {
+        const positions = [];
+        let fromIdx = 0;
+        while (positions.length < 64) {
+          const found = chapterText.indexOf(needle, fromIdx);
+          if (found === -1) break;
+          positions.push(found);
+          fromIdx = found + Math.max(1, needle.length);
+        }
+        return positions;
+      };
+
+      let needle = snippet;
+      let usedShortNeedle = false;
+      let positions = collectPositions(needle);
+      if (positions.length === 0 && snippet.length > 20) {
+        const shortCore = safeAnchorUnicodeSlice(snippet, 0, 20).trim();
+        if (shortCore.length >= 12) {
+          needle = shortCore;
+          usedShortNeedle = true;
+          positions = collectPositions(needle);
+        }
+      }
+      if (positions.length === 0) return -1;
+
+      const hasExpectedRatio = typeof anchor.chapterCharOffset === "number" && Number(anchor.chapterTextLen) > 0;
+      const expectedPos = hasExpectedRatio
+        ? (anchor.chapterCharOffset / Number(anchor.chapterTextLen)) * chapterText.length
+        : 0;
+
+      const scored = positions.map(pos => {
+        const ctx = scoreAnchorContextMatch(chapterText, pos, needle.length, ctxBefore, ctxAfter);
+        const distRatio = hasExpectedRatio
+          ? Math.abs(pos - expectedPos) / Math.max(1, chapterText.length)
+          : 1;
+        return { pos, score: ctx.score, matchedParts: ctx.matchedParts, distRatio };
+      });
+
+      if (scored.length === 1) {
+        const only = scored[0];
+        if (!usedShortNeedle && needle.length >= 10) {
+          if (hasAnyCtx && only.score === 0 && needle.length < 18) return -1;
+          return only.pos;
+        }
+        if (only.score >= 8 || (needle.length >= 6 && only.distRatio <= 0.25)) {
+          return only.pos;
+        }
+        return -1;
+      }
+
+      scored.sort((a, b) => {
+        if (b.score !== a.score) return b.score - a.score;
+        return a.distRatio - b.distRatio;
+      });
+
+      const best = scored[0];
+      const second = scored[1];
+      if (best.score < 10) return -1;
+      if (best.score >= second.score + 6) return best.pos;
+      if (best.score > second.score && best.distRatio + 0.08 < second.distRatio) return best.pos;
+      return -1;
     }
 
     function restoreReaderScrollAnchor(anchor, fallbackRatio = 0) {
       const scrollAreaEl = document.getElementById("readerScrollArea");
+      const content = document.getElementById("readerContent");
       if (!scrollAreaEl) return;
       const maxScroll = Math.max(0, scrollAreaEl.scrollHeight - scrollAreaEl.clientHeight);
       if (maxScroll <= 0) {
@@ -9488,57 +9973,676 @@ https://github.com/nodeca/pako/blob/main/LICENSE
         return;
       }
 
-      if (anchor && typeof anchor === "object" && typeof anchor.blockIdx === "number") {
+      if (anchor && typeof anchor === "object") {
+        const isV2 = Number(anchor.v) >= 2;
+        const scrollRect = scrollAreaEl.getBoundingClientRect();
+        const targetY = isV2 ? (scrollRect.top + 8) : scrollRect.top;
+
+        if (
+          anchor.blockIdx === 0 &&
+          !anchor.textSample &&
+          !anchor.visibleSnippet &&
+          (Number(anchor.blockProgress) || 0) <= 0 &&
+          !(Number(anchor.preBlockGap) > 0)
+        ) {
+          scrollAreaEl.scrollTop = 0;
+          return;
+        }
+
         const blocks = getReaderAnchorBlocks();
-        if (blocks.length > 0) {
-          let targetEl = blocks[Math.max(0, Math.min(blocks.length - 1, anchor.blockIdx))];
-          const sampleHead = String(anchor.textSample || "").slice(0, 32).trim();
+        if (isV2 && Number(anchor.preBlockGap) > 0 && blocks.length > 0) {
+          const bRect = blocks[0].getBoundingClientRect();
+          const nextTop = scrollAreaEl.scrollTop + (bRect.top - targetY - Number(anchor.preBlockGap));
+          scrollAreaEl.scrollTop = Math.max(0, Math.min(maxScroll, Math.round(nextTop)));
+          return;
+        }
+
+        const scrollToIndexPos = (indexData, pos) => {
+          const rect = getAnchorNormCharRect(indexData, pos);
+          if (!rect) return false;
+          const nextTop = scrollAreaEl.scrollTop + (rect.top - targetY);
+          scrollAreaEl.scrollTop = Math.max(0, Math.min(maxScroll, Math.round(nextTop)));
+          return true;
+        };
+
+        let cachedChapterIndex = null;
+        const getChapterIndex = () => {
+          if (!cachedChapterIndex && content) {
+            cachedChapterIndex = buildChapterTextIndex(content, null, { collectMap: true });
+          }
+          return cachedChapterIndex;
+        };
+
+        // 1. Exact textual position (v2)
+        if (isV2 && anchor.visibleSnippet) {
+          const snippet = String(anchor.visibleSnippet).trim();
+          const snippetPrefix = safeAnchorUnicodeSlice(snippet, 0, Math.min(12, snippet.length));
+
+          if (typeof anchor.blockIdx === "number" && anchor.blockIdx >= 0 && anchor.blockIdx < blocks.length) {
+            const candEl = blocks[anchor.blockIdx];
+            const bIdx = buildChapterTextIndex(candEl, null, { collectMap: true });
+            const bText = bIdx.normText || "";
+            const sampleCheck = safeAnchorUnicodeSlice(normalizeAnchorText(anchor.textSample || ""), 0, 64).trim();
+            const blockMatches = !sampleCheck || bText.includes(sampleCheck);
+            const charOff = typeof anchor.blockCharOffset === "number" ? anchor.blockCharOffset : -1;
+            if (blockMatches && charOff >= 0 && charOff < bText.length && snippetPrefix) {
+              const atSlice = bText.slice(charOff, charOff + snippet.length);
+              if (atSlice.startsWith(snippetPrefix) || snippet.startsWith(atSlice.slice(0, snippetPrefix.length))) {
+                if (scrollToIndexPos(bIdx, charOff)) return;
+              }
+            }
+          }
+
+          if (typeof anchor.chapterCharOffset === "number" && anchor.chapterCharOffset >= 0) {
+            const cIdx = getChapterIndex();
+            const cText = cIdx ? (cIdx.normText || "") : "";
+            const cOff = anchor.chapterCharOffset;
+            if (cText && cOff < cText.length && snippetPrefix) {
+              const atChapterSlice = cText.slice(cOff, cOff + snippet.length);
+              const prefixMatch = atChapterSlice.startsWith(snippetPrefix);
+              if (prefixMatch) {
+                const ctxCheck = scoreAnchorContextMatch(
+                  cText,
+                  cOff,
+                  snippet.length,
+                  String(anchor.contextBefore || ""),
+                  String(anchor.contextAfter || "")
+                );
+                const exactLenMatch = Number(anchor.chapterTextLen) > 0 && Number(anchor.chapterTextLen) === cText.length;
+                if (atChapterSlice === snippet || exactLenMatch || ctxCheck.score >= 8) {
+                  if (scrollToIndexPos(cIdx, cOff)) return;
+                }
+              }
+            }
+          }
+
+          // 2. Visible text fragment + context (confidence-gated)
+          const cIdx = getChapterIndex();
+          const cText = cIdx ? (cIdx.normText || "") : "";
+          const confidentPos = findConfidentChapterSnippetPos(cText, anchor);
+          if (confidentPos >= 0) {
+            if (scrollToIndexPos(cIdx, confidentPos)) return;
+          }
+        }
+
+        // 3. Block index & internal progress (v2 fallback + legacy v1)
+        if (typeof anchor.blockIdx === "number" && blocks.length > 0) {
+          const clampedIdx = Math.max(0, Math.min(blocks.length - 1, anchor.blockIdx));
+          let targetEl = blocks[clampedIdx];
+          const sampleHead = safeAnchorUnicodeSlice(normalizeAnchorText(anchor.textSample || ""), 0, 32).trim();
           if (sampleHead) {
-            const curSample = (targetEl.textContent || "").replace(/\s+/g, " ").trim();
+            const curSample = normalizeAnchorText(targetEl.textContent || "");
             if (!curSample.includes(sampleHead)) {
-              const found = blocks.find(b => (b.textContent || "").replace(/\s+/g, " ").trim().includes(sampleHead));
-              if (found) targetEl = found;
+              let bestMatch = null;
+              let bestDist = Infinity;
+              for (let i = 0; i < blocks.length; i++) {
+                const candidateSample = normalizeAnchorText(blocks[i].textContent || "");
+                if (candidateSample.includes(sampleHead)) {
+                  const dist = Math.abs(i - anchor.blockIdx);
+                  if (dist < bestDist) {
+                    bestDist = dist;
+                    bestMatch = blocks[i];
+                  }
+                }
+              }
+              if (bestMatch) targetEl = bestMatch;
             }
           }
           if (targetEl) {
-            const scrollRect = scrollAreaEl.getBoundingClientRect();
             const bRect = targetEl.getBoundingClientRect();
             const progress = Math.max(0, Math.min(1, Number(anchor.blockProgress) || 0));
-            const nextTop = scrollAreaEl.scrollTop + (bRect.top - scrollRect.top) + (bRect.height * progress);
+            const nextTop = scrollAreaEl.scrollTop + (bRect.top - targetY) + (bRect.height * progress);
             scrollAreaEl.scrollTop = Math.max(0, Math.min(maxScroll, Math.round(nextTop)));
             return;
           }
         }
       }
 
+      // 4. Chapter scroll ratio (last resort)
       scrollAreaEl.scrollTop = Math.max(0, Math.min(maxScroll, Math.round(maxScroll * Math.max(0, Math.min(1, fallbackRatio || 0)))));
+    }
+
+    let layoutStabilizeToken = 0;
+    let activeStabilizationSession = null;
+    let passiveAssetCleanup = null;
+    let isUserTouchDragging = false;
+    let hasUserMovedAfterStabilize = false;
+    let scrollStableSnapshotTimer = null;
+    let lastObservedViewport = { w: 0, h: 0 };
+    let lastStableReaderState = {
+      bookId: null,
+      chapterIdx: -1,
+      anchor: null,
+      ratio: 0,
+      viewportW: 0,
+      viewportH: 0,
+      contentH: 0
+    };
+
+    function isReaderViewActive() {
+      const sa = document.getElementById("readerScrollArea");
+      const vr = document.getElementById("viewReader");
+      return Boolean(sa && vr && !vr.classList.contains("hidden") && currentBook);
+    }
+
+    function clearPassiveLateAssetWatchers() {
+      if (typeof passiveAssetCleanup === "function") {
+        try { passiveAssetCleanup(); } catch (e) {}
+        passiveAssetCleanup = null;
+      }
+    }
+
+    function cancelReaderLayoutStabilization({ resetStableState = false } = {}) {
+      layoutStabilizeToken++;
+      clearTimeout(scrollStableSnapshotTimer);
+      scrollStableSnapshotTimer = null;
+      if (activeStabilizationSession) {
+        const cleanups = activeStabilizationSession.cleanupFns || [];
+        activeStabilizationSession.cleanupFns = [];
+        for (let i = 0; i < cleanups.length; i++) {
+          try { cleanups[i](); } catch (e) {}
+        }
+        activeStabilizationSession = null;
+      }
+      clearPassiveLateAssetWatchers();
+      isRestoringScroll = false;
+      if (resetStableState) {
+        hasUserMovedAfterStabilize = false;
+        lastStableReaderState = {
+          bookId: null,
+          chapterIdx: -1,
+          anchor: null,
+          ratio: 0,
+          viewportW: 0,
+          viewportH: 0,
+          contentH: 0
+        };
+        lastObservedViewport = { w: 0, h: 0 };
+      }
+    }
+
+    function captureStableReaderStateSnapshot({ updateBookMeta = false, preferredV2Anchor = null } = {}) {
+      if (!isReaderViewActive() || isRestoringScroll || activeStabilizationSession || isUserTouchDragging) {
+        return null;
+      }
+      const sa = document.getElementById("readerScrollArea");
+      const content = document.getElementById("readerContent");
+      const liveAnchor = captureReaderScrollAnchor();
+      if (!liveAnchor) return null;
+
+      let chosenAnchor = liveAnchor;
+      if (
+        preferredV2Anchor &&
+        typeof preferredV2Anchor === "object" &&
+        Number(preferredV2Anchor.v) >= 2 &&
+        typeof preferredV2Anchor.chapterCharOffset === "number" &&
+        preferredV2Anchor.visibleSnippet &&
+        content
+      ) {
+        try {
+          const cIdx = buildChapterTextIndex(content, null, { collectMap: true });
+          const cText = cIdx.normText || "";
+          const prefOff = preferredV2Anchor.chapterCharOffset;
+          const snipPrefix = safeAnchorUnicodeSlice(String(preferredV2Anchor.visibleSnippet).trim(), 0, 12);
+          if (cText && prefOff >= 0 && prefOff < cText.length && snipPrefix && cText.startsWith(snipPrefix, prefOff)) {
+            const prefRect = getAnchorNormCharRect(cIdx, prefOff);
+            const liveRect = typeof liveAnchor.chapterCharOffset === "number"
+              ? getAnchorNormCharRect(cIdx, liveAnchor.chapterCharOffset)
+              : null;
+            const saRect = sa.getBoundingClientRect();
+            const maxS = Math.max(0, sa.scrollHeight - sa.clientHeight);
+            const sameLine = Boolean(prefRect && liveRect && Math.abs(prefRect.top - liveRect.top) <= 6);
+            const visibleAtBottomClamp = Boolean(
+              prefRect &&
+              sa.scrollTop >= Math.max(0, maxS - 4) &&
+              prefRect.top >= saRect.top - 4 &&
+              prefRect.bottom <= saRect.bottom + 4
+            );
+            if (sameLine || visibleAtBottomClamp) {
+              chosenAnchor = preferredV2Anchor;
+            }
+          }
+        } catch (e) {}
+      }
+
+      const maxS = Math.max(1, sa.scrollHeight - sa.clientHeight);
+      const ratio = Number(Math.max(0, Math.min(1, sa.scrollTop / maxS)).toFixed(4));
+      lastStableReaderState = {
+        bookId: currentBook.id,
+        chapterIdx: currentBook.currentChapter || 0,
+        anchor: chosenAnchor,
+        ratio,
+        viewportW: sa.clientWidth,
+        viewportH: sa.clientHeight,
+        contentH: content ? content.scrollHeight : 0
+      };
+      lastObservedViewport = { w: sa.clientWidth, h: sa.clientHeight };
+      if (updateBookMeta && currentBook) {
+        currentBook.chapterScrollRatio = ratio;
+        currentBook.chapterAnchor = chosenAnchor;
+      }
+      return lastStableReaderState;
+    }
+
+    function getBestStableAnchorForCurrentChapter() {
+      const sa = document.getElementById("readerScrollArea");
+      const curBookId = currentBook ? currentBook.id : null;
+      const curChIdx = currentBook ? (currentBook.currentChapter || 0) : -1;
+
+      if (
+        activeStabilizationSession &&
+        activeStabilizationSession.bookId === curBookId &&
+        activeStabilizationSession.chapterIdx === curChIdx &&
+        activeStabilizationSession.anchor
+      ) {
+        return {
+          anchor: activeStabilizationSession.anchor,
+          ratio: activeStabilizationSession.ratio
+        };
+      }
+
+      if (isReaderViewActive() && !isRestoringScroll && !isUserTouchDragging && lastObservedViewport.w > 0) {
+        const vw = sa ? sa.clientWidth : 0;
+        const vh = sa ? sa.clientHeight : 0;
+        if (Math.abs(vw - lastObservedViewport.w) < 2 && Math.abs(vh - lastObservedViewport.h) < 2) {
+          const liveAnchor = captureReaderScrollAnchor();
+          if (liveAnchor) {
+            const maxS = Math.max(1, sa.scrollHeight - sa.clientHeight);
+            const liveRatio = Number(Math.max(0, Math.min(1, sa.scrollTop / maxS)).toFixed(4));
+            return { anchor: liveAnchor, ratio: liveRatio };
+          }
+        }
+      }
+
+      if (
+        lastStableReaderState.bookId === curBookId &&
+        lastStableReaderState.chapterIdx === curChIdx &&
+        lastStableReaderState.anchor
+      ) {
+        return {
+          anchor: lastStableReaderState.anchor,
+          ratio: lastStableReaderState.ratio
+        };
+      }
+
+      return {
+        anchor: currentBook ? (currentBook.chapterAnchor || null) : null,
+        ratio: currentBook ? (currentBook.chapterScrollRatio || 0) : 0
+      };
+    }
+
+    function attachPassiveLateAssetWatcher(expectedRenderToken, expectedBookId, expectedChapterIdx) {
+      clearPassiveLateAssetWatchers();
+      if (!isReaderViewActive()) return;
+      const content = document.getElementById("readerContent");
+      const scrollAreaEl = document.getElementById("readerScrollArea");
+      if (!content || !scrollAreaEl) return;
+
+      const cleanups = [];
+      let disposed = false;
+      let lastContentH = content.scrollHeight;
+      let lastContentW = content.clientWidth;
+
+      const cleanupNow = () => {
+        if (disposed) return;
+        disposed = true;
+        for (let i = 0; i < cleanups.length; i++) {
+          try { cleanups[i](); } catch (e) {}
+        }
+        cleanups.length = 0;
+        if (passiveAssetCleanup === cleanupNow) passiveAssetCleanup = null;
+      };
+      passiveAssetCleanup = cleanupNow;
+
+      const maybeTriggerLateRestabilize = (reason) => {
+        if (disposed) return;
+        if (expectedRenderToken !== readerRenderToken || !isReaderViewActive()) {
+          cleanupNow();
+          return;
+        }
+        if (currentBook.id !== expectedBookId || (currentBook.currentChapter || 0) !== expectedChapterIdx) {
+          cleanupNow();
+          return;
+        }
+        if (activeStabilizationSession || isRestoringScroll || isUserTouchDragging || hasUserMovedAfterStabilize) return;
+
+        const newH = content.scrollHeight;
+        const newW = content.clientWidth;
+        const geomShifted = Math.abs(newH - lastContentH) >= 2 || Math.abs(newW - lastContentW) >= 2;
+        if (!geomShifted && reason !== "late-font" && reason !== "late-image") {
+          return;
+        }
+        lastContentH = newH;
+        lastContentW = newW;
+
+        const hasValidStable =
+          lastStableReaderState.bookId === expectedBookId &&
+          lastStableReaderState.chapterIdx === expectedChapterIdx &&
+          lastStableReaderState.anchor;
+        const targetAnchor = hasValidStable
+          ? lastStableReaderState.anchor
+          : (currentBook.chapterAnchor || null);
+        const targetRatio = hasValidStable
+          ? lastStableReaderState.ratio
+          : (currentBook.chapterScrollRatio || 0);
+        if (!targetAnchor && !(targetRatio > 0)) return;
+
+        startReaderAnchorStabilization(targetAnchor, targetRatio, {
+          renderToken: expectedRenderToken,
+          reason,
+          applyImmediately: false,
+          attachAssetWatchers: true
+        });
+      };
+
+      const imgs = Array.from(content.querySelectorAll("img"));
+      const pendingImgs = imgs.filter(img => !img.complete);
+      pendingImgs.forEach(img => {
+        const onImgLoad = () => maybeTriggerLateRestabilize("late-image");
+        const onImgErr = () => {};
+        img.addEventListener("load", onImgLoad, { once: true });
+        img.addEventListener("error", onImgErr, { once: true });
+        cleanups.push(() => {
+          img.removeEventListener("load", onImgLoad);
+          img.removeEventListener("error", onImgErr);
+        });
+        if (typeof img.decode === "function") {
+          img.decode().then(onImgLoad).catch(() => {});
+        }
+      });
+
+      if (typeof document.fonts !== "undefined" && document.fonts) {
+        const onFontsDone = () => maybeTriggerLateRestabilize("late-font");
+        if (typeof document.fonts.addEventListener === "function") {
+          document.fonts.addEventListener("loadingdone", onFontsDone);
+          cleanups.push(() => document.fonts.removeEventListener("loadingdone", onFontsDone));
+        }
+        if (document.fonts.status === "loading" && document.fonts.ready && typeof document.fonts.ready.then === "function") {
+          document.fonts.ready.then(onFontsDone).catch(() => {});
+        }
+      }
+
+      if (typeof ResizeObserver === "function") {
+        const contentRo = new ResizeObserver(() => {
+          maybeTriggerLateRestabilize("late-content-resize");
+        });
+        contentRo.observe(content);
+        cleanups.push(() => contentRo.disconnect());
+      }
+
+      // Bounded safety window so stalled external resources never leave listeners attached forever
+      const safetyTimer = setTimeout(cleanupNow, 5000);
+      cleanups.push(() => clearTimeout(safetyTimer));
+    }
+
+    function startReaderAnchorStabilization(anchor, fallbackRatio = 0, options = {}) {
+      const renderTokenSnap = typeof options.renderToken === "number" ? options.renderToken : readerRenderToken;
+      const attachAssetWatchers = options.attachAssetWatchers !== false;
+      const applyImmediately = options.applyImmediately !== false;
+
+      if (!isReaderViewActive()) return;
+      const scrollAreaEl = document.getElementById("readerScrollArea");
+      const content = document.getElementById("readerContent");
+      if (!scrollAreaEl) return;
+
+      const targetBookId = currentBook.id;
+      const targetChapterIdx = currentBook.currentChapter || 0;
+      const preservedFallback = {
+        anchor: currentBook.chapterAnchor || anchor || null,
+        ratio: typeof currentBook.chapterScrollRatio === "number" ? currentBook.chapterScrollRatio : (fallbackRatio || 0)
+      };
+
+      cancelReaderLayoutStabilization({ resetStableState: false });
+
+      const myToken = layoutStabilizeToken;
+      isRestoringScroll = true;
+
+      const session = {
+        token: myToken,
+        renderToken: renderTokenSnap,
+        bookId: targetBookId,
+        chapterIdx: targetChapterIdx,
+        anchor: anchor || null,
+        ratio: Math.max(0, Math.min(1, Number(fallbackRatio) || 0)),
+        isApplyingRestore: false,
+        lastMeasuredContentH: content ? content.scrollHeight : 0,
+        lastMeasuredContentW: content ? content.clientWidth : 0,
+        lastMeasuredScrollTop: scrollAreaEl.scrollTop,
+        stableFrames: 0,
+        rafId: 0,
+        safetyTimerId: 0,
+        cleanupFns: []
+      };
+      activeStabilizationSession = session;
+
+      const isSessionValid = () => (
+        myToken === layoutStabilizeToken &&
+        renderTokenSnap === readerRenderToken &&
+        activeStabilizationSession === session &&
+        isReaderViewActive() &&
+        currentBook.id === targetBookId &&
+        (currentBook.currentChapter || 0) === targetChapterIdx
+      );
+
+      const applyRestore = () => {
+        if (!isSessionValid()) return false;
+        session.isApplyingRestore = true;
+        try {
+          restoreReaderScrollAnchor(session.anchor, session.ratio);
+          lastMenuToggleScrollTop = scrollAreaEl.scrollTop;
+          updateReaderPaginationIndicator();
+          session.lastMeasuredContentH = content ? content.scrollHeight : 0;
+          session.lastMeasuredContentW = content ? content.clientWidth : 0;
+          session.lastMeasuredScrollTop = scrollAreaEl.scrollTop;
+          lastObservedViewport = { w: scrollAreaEl.clientWidth, h: scrollAreaEl.clientHeight };
+        } finally {
+          session.isApplyingRestore = false;
+        }
+        return true;
+      };
+
+      const finishStabilization = () => {
+        if (!isSessionValid()) return;
+        const cleanups = session.cleanupFns || [];
+        session.cleanupFns = [];
+        for (let i = 0; i < cleanups.length; i++) {
+          try { cleanups[i](); } catch (e) {}
+        }
+        activeStabilizationSession = null;
+        isRestoringScroll = false;
+        hasUserMovedAfterStabilize = false;
+
+        lastMenuToggleScrollTop = scrollAreaEl.scrollTop;
+        updateReaderPaginationIndicator();
+
+        const snap = captureStableReaderStateSnapshot({
+          updateBookMeta: true,
+          preferredV2Anchor: session.anchor
+        });
+        if (!snap && currentBook) {
+          // If blocks were unavailable, retain previous valid progress instead of degrading
+          currentBook.chapterAnchor = preservedFallback.anchor;
+          currentBook.chapterScrollRatio = preservedFallback.ratio;
+        }
+
+        if (attachAssetWatchers) {
+          attachPassiveLateAssetWatcher(renderTokenSnap, targetBookId, targetChapterIdx);
+        }
+      };
+
+      const checkAndScheduleNextFrame = () => {
+        if (!isSessionValid()) return;
+        session.rafId = requestAnimationFrame(() => {
+          session.rafId = 0;
+          if (!isSessionValid()) return;
+
+          const curH = content ? content.scrollHeight : 0;
+          const curW = content ? content.clientWidth : 0;
+          const prevScroll = scrollAreaEl.scrollTop;
+          const geomChanged =
+            Math.abs(curH - session.lastMeasuredContentH) >= 1 ||
+            Math.abs(curW - session.lastMeasuredContentW) >= 1;
+
+          if (geomChanged) {
+            session.stableFrames = 0;
+            applyRestore();
+            checkAndScheduleNextFrame();
+            return;
+          }
+
+          // Re-verify anchor alignment silently without causing feedback loop
+          session.isApplyingRestore = true;
+          try {
+            restoreReaderScrollAnchor(session.anchor, session.ratio);
+          } finally {
+            session.isApplyingRestore = false;
+          }
+          const deltaScroll = Math.abs(scrollAreaEl.scrollTop - prevScroll);
+          if (deltaScroll > 2) {
+            session.stableFrames = 0;
+            lastMenuToggleScrollTop = scrollAreaEl.scrollTop;
+            updateReaderPaginationIndicator();
+            session.lastMeasuredScrollTop = scrollAreaEl.scrollTop;
+            checkAndScheduleNextFrame();
+            return;
+          }
+
+          session.stableFrames++;
+          const fontsPending = typeof document.fonts !== "undefined" && document.fonts && document.fonts.status === "loading";
+          if (session.stableFrames >= 2 && !fontsPending) {
+            finishStabilization();
+          } else if (session.stableFrames >= 4) {
+            // Two+ frames settled; exit active lock cleanly and let passive watcher catch late font
+            finishStabilization();
+          } else {
+            checkAndScheduleNextFrame();
+          }
+        });
+      };
+      session.cleanupFns.push(() => {
+        if (session.rafId) {
+          cancelAnimationFrame(session.rafId);
+          session.rafId = 0;
+        }
+      });
+
+      if (typeof ResizeObserver === "function" && content) {
+        const contentRo = new ResizeObserver(() => {
+          if (!isSessionValid() || session.isApplyingRestore) return;
+          const curH = content.scrollHeight;
+          const curW = content.clientWidth;
+          if (
+            Math.abs(curH - session.lastMeasuredContentH) >= 1 ||
+            Math.abs(curW - session.lastMeasuredContentW) >= 1
+          ) {
+            session.stableFrames = 0;
+            applyRestore();
+          }
+        });
+        contentRo.observe(content);
+        session.cleanupFns.push(() => contentRo.disconnect());
+      }
+
+      if (typeof document.fonts !== "undefined" && document.fonts) {
+        const onFontEvent = () => {
+          if (!isSessionValid()) return;
+          session.stableFrames = 0;
+          applyRestore();
+        };
+        if (typeof document.fonts.addEventListener === "function") {
+          document.fonts.addEventListener("loadingdone", onFontEvent);
+          session.cleanupFns.push(() => document.fonts.removeEventListener("loadingdone", onFontEvent));
+        }
+        if (document.fonts.status === "loading" && document.fonts.ready && typeof document.fonts.ready.then === "function") {
+          document.fonts.ready.then(onFontEvent).catch(() => {});
+        }
+      }
+
+      if (content) {
+        const pendingImgs = Array.from(content.querySelectorAll("img")).filter(img => !img.complete);
+        pendingImgs.forEach(img => {
+          const onImgLoad = () => {
+            if (!isSessionValid()) return;
+            session.stableFrames = 0;
+            applyRestore();
+          };
+          img.addEventListener("load", onImgLoad, { once: true });
+          session.cleanupFns.push(() => img.removeEventListener("load", onImgLoad));
+        });
+      }
+
+      // Bounded safety cap: never block reading indefinitely if an external font/image stalls
+      session.safetyTimerId = setTimeout(() => {
+        if (isSessionValid()) {
+          applyRestore();
+          finishStabilization();
+        }
+      }, 1500);
+      session.cleanupFns.push(() => {
+        if (session.safetyTimerId) {
+          clearTimeout(session.safetyTimerId);
+          session.safetyTimerId = 0;
+        }
+      });
+
+      if (applyImmediately) {
+        applyRestore();
+      }
+      checkAndScheduleNextFrame();
     }
 
     function preserveReaderScrollPositionAroundLayoutChange(mutatorFn) {
       const scrollAreaEl = document.getElementById("readerScrollArea");
       const readerView = document.getElementById("viewReader");
       const canPreserve = Boolean(scrollAreaEl && readerView && !readerView.classList.contains("hidden"));
-      let anchor = null;
+      let targetAnchor = null;
       let fallbackRatio = currentBook ? (currentBook.chapterScrollRatio || 0) : 0;
+
       if (canPreserve) {
-        anchor = captureReaderScrollAnchor();
-        const maxS = Math.max(1, scrollAreaEl.scrollHeight - scrollAreaEl.clientHeight);
-        fallbackRatio = Math.max(0, Math.min(1, scrollAreaEl.scrollTop / maxS));
+        const best = getBestStableAnchorForCurrentChapter();
+        targetAnchor = best.anchor;
+        fallbackRatio = best.ratio;
       }
+
       mutatorFn();
       if (!canPreserve) return;
-      isRestoringScroll = true;
-      requestAnimationFrame(() => {
-        restoreReaderScrollAnchor(anchor, fallbackRatio);
-        lastMenuToggleScrollTop = scrollAreaEl.scrollTop;
-        updateReaderPaginationIndicator();
-        if (currentBook) {
-          const maxS = Math.max(1, scrollAreaEl.scrollHeight - scrollAreaEl.clientHeight);
-          currentBook.chapterScrollRatio = Number(Math.max(0, Math.min(1, scrollAreaEl.scrollTop / maxS)).toFixed(4));
-          currentBook.chapterAnchor = captureReaderScrollAnchor();
-        }
-        setTimeout(() => { isRestoringScroll = false; }, 60);
+
+      startReaderAnchorStabilization(targetAnchor, fallbackRatio, {
+        renderToken: readerRenderToken,
+        reason: "layout-change",
+        applyImmediately: true,
+        attachAssetWatchers: true
       });
+    }
+
+    function switchReaderReadingMode(targetMode) {
+      const nextMode = targetMode === "paginated" ? "paginated" : "scroll";
+      if (readerConfig.readingMode === nextMode) {
+        updateReadingModeUI();
+        return;
+      }
+
+      const scrollAreaEl = document.getElementById("readerScrollArea");
+      const canPreserve = isReaderViewActive();
+      const best = canPreserve ? getBestStableAnchorForCurrentChapter() : { anchor: null, ratio: 0 };
+
+      readerConfig.readingMode = nextMode;
+      if (scrollAreaEl) {
+        const nextOverflowY = nextMode === "paginated" ? "hidden" : "auto";
+        lastScrollOverflowY = nextOverflowY;
+        scrollAreaEl.style.overflowY = nextOverflowY;
+      }
+      updateReadingModeUI();
+      dbSave("settings", { key: "readerConfig", val: readerConfig });
+
+      if (canPreserve) {
+        startReaderAnchorStabilization(best.anchor, best.ratio, {
+          renderToken: readerRenderToken,
+          reason: "mode-switch",
+          applyImmediately: true,
+          attachAssetWatchers: true
+        });
+      }
     }
 
     function updateReaderExternalMediaBar(blockedCount) {
@@ -9557,8 +10661,9 @@ https://github.com/nodeca/pako/blob/main/LICENSE
       e.stopPropagation();
       if (!currentBook) return;
       currentBook.allowExternalResources = true;
-      const liveAnchor = captureReaderScrollAnchor();
-      if (liveAnchor) currentBook.chapterAnchor = liveAnchor;
+      const best = getBestStableAnchorForCurrentChapter();
+      if (best.anchor) currentBook.chapterAnchor = best.anchor;
+      currentBook.chapterScrollRatio = best.ratio;
       if (Array.isArray(currentBook.chapters)) {
         currentBook.chapters.forEach(ch => {
           if (ch && typeof ch === "object") cleanedChapterCache.delete(ch);
@@ -9600,13 +10705,22 @@ https://github.com/nodeca/pako/blob/main/LICENSE
 
       const scrollAreaEl = document.getElementById("readerScrollArea");
       if (scrollAreaEl && !options.resetScroll && !options.searchQuery && !document.getElementById("viewReader")?.classList.contains("hidden")) {
-        const liveMax = scrollAreaEl.scrollHeight - scrollAreaEl.clientHeight;
-        if (liveMax > 2) {
-          currentBook.chapterScrollRatio = Number(Math.max(0, Math.min(1, scrollAreaEl.scrollTop / liveMax)).toFixed(4));
+        if (activeStabilizationSession && activeStabilizationSession.bookId === currentBook.id && activeStabilizationSession.chapterIdx === (currentBook.currentChapter || 0)) {
+          if (activeStabilizationSession.anchor) currentBook.chapterAnchor = activeStabilizationSession.anchor;
+          currentBook.chapterScrollRatio = activeStabilizationSession.ratio;
+        } else if (!isRestoringScroll) {
+          const liveMax = scrollAreaEl.scrollHeight - scrollAreaEl.clientHeight;
+          const liveAnchor = captureReaderScrollAnchor();
+          if (liveAnchor) {
+            currentBook.chapterAnchor = liveAnchor;
+            if (liveMax > 2) {
+              currentBook.chapterScrollRatio = Number(Math.max(0, Math.min(1, scrollAreaEl.scrollTop / liveMax)).toFixed(4));
+            }
+          }
         }
-        const liveAnchor = captureReaderScrollAnchor();
-        if (liveAnchor) currentBook.chapterAnchor = liveAnchor;
       }
+
+      cancelReaderLayoutStabilization({ resetStableState: Boolean(options.resetScroll || options.searchQuery) });
 
       applyReaderStyles();
       const aaPanelEl = document.getElementById("panelTypography");
@@ -9651,6 +10765,7 @@ https://github.com/nodeca/pako/blob/main/LICENSE
       applySavedHighlights();
 
       if (scrollAreaEl) {
+        lastObservedViewport = { w: scrollAreaEl.clientWidth, h: scrollAreaEl.clientHeight };
         isRestoringScroll = true;
         if (options.searchQuery) {
           requestAnimationFrame(() => {
@@ -9658,9 +10773,12 @@ https://github.com/nodeca/pako/blob/main/LICENSE
             scrollToSearchQueryInReader(options.searchQuery, options.matchOccurrence || 0);
             updateReaderPaginationIndicator();
             isRestoringScroll = false;
-            setTimeout(() => {
-              if (myRenderToken === readerRenderToken) updateReaderPaginationIndicator();
-            }, 420);
+            requestAnimationFrame(() => {
+              if (myRenderToken === readerRenderToken) {
+                updateReaderPaginationIndicator();
+                captureStableReaderStateSnapshot({ updateBookMeta: false });
+              }
+            });
           });
         } else if (!options.resetScroll && (currentBook.chapterAnchor || currentBook.chapterScrollRatio > 0)) {
           const imgs = content ? Array.from(content.querySelectorAll("img")).slice(0, 6) : [];
@@ -9671,24 +10789,26 @@ https://github.com/nodeca/pako/blob/main/LICENSE
             ]);
             if (myRenderToken !== readerRenderToken) return;
           }
-          requestAnimationFrame(() => {
-            if (myRenderToken !== readerRenderToken) return;
-            restoreReaderScrollAnchor(currentBook.chapterAnchor, currentBook.chapterScrollRatio || 0);
-            lastMenuToggleScrollTop = scrollAreaEl.scrollTop;
-            updateReaderPaginationIndicator();
-            setTimeout(() => {
-              if (myRenderToken === readerRenderToken) isRestoringScroll = false;
-            }, 120);
-          });
+          startReaderAnchorStabilization(
+            currentBook.chapterAnchor || null,
+            currentBook.chapterScrollRatio || 0,
+            {
+              renderToken: myRenderToken,
+              reason: "render",
+              applyImmediately: true,
+              attachAssetWatchers: true
+            }
+          );
         } else {
           scrollAreaEl.scrollTop = 0;
           lastMenuToggleScrollTop = 0;
           requestAnimationFrame(() => {
-            if (myRenderToken === readerRenderToken) updateReaderPaginationIndicator();
+            if (myRenderToken !== readerRenderToken) return;
+            updateReaderPaginationIndicator();
+            isRestoringScroll = false;
+            captureStableReaderStateSnapshot({ updateBookMeta: false });
+            attachPassiveLateAssetWatcher(myRenderToken, currentBook.id, chapterIdx);
           });
-          setTimeout(() => {
-            if (myRenderToken === readerRenderToken) isRestoringScroll = false;
-          }, 80);
         }
       }
     }
@@ -10023,6 +11143,7 @@ https://github.com/nodeca/pako/blob/main/LICENSE
 
     async function stepReaderPage(direction) {
       if (!scrollArea || !currentBook || isSwitchingChapter) return;
+      cancelReaderLayoutStabilization({ resetStableState: false });
       const step = getReaderPageStep();
       const maxScroll = Math.max(0, scrollArea.scrollHeight - scrollArea.clientHeight);
 
@@ -10030,6 +11151,8 @@ https://github.com/nodeca/pako/blob/main/LICENSE
         if (scrollArea.scrollTop < maxScroll - 6) {
           scrollArea.scrollTop = Math.min(maxScroll, scrollArea.scrollTop + step);
           updateReaderPaginationIndicator();
+          hasUserMovedAfterStabilize = false;
+          captureStableReaderStateSnapshot({ updateBookMeta: false });
         } else if (currentBook.currentChapter < currentBook.totalChapters - 1) {
           isSwitchingChapter = true;
           try {
@@ -10047,6 +11170,8 @@ https://github.com/nodeca/pako/blob/main/LICENSE
         if (scrollArea.scrollTop > 6) {
           scrollArea.scrollTop = Math.max(0, scrollArea.scrollTop - step);
           updateReaderPaginationIndicator();
+          hasUserMovedAfterStabilize = false;
+          captureStableReaderStateSnapshot({ updateBookMeta: false });
         } else if (currentBook.currentChapter > 0) {
           isSwitchingChapter = true;
           try {
@@ -10067,6 +11192,7 @@ https://github.com/nodeca/pako/blob/main/LICENSE
       scrollArea.addEventListener("touchstart", (e) => {
         if (e.touches.length === 1) {
           isTouchMoved = false;
+          isUserTouchDragging = false;
           touchStartTime = Date.now();
           touchStartX = e.touches[0].clientX;
           touchStartY = e.touches[0].clientY;
@@ -10077,11 +11203,23 @@ https://github.com/nodeca/pako/blob/main/LICENSE
         if (e.touches.length === 1) {
           const dx = Math.abs(e.touches[0].clientX - touchStartX);
           const dy = Math.abs(e.touches[0].clientY - touchStartY);
+          if (dx > 10 || dy > 10) {
+            isUserTouchDragging = true;
+            if (activeStabilizationSession) {
+              cancelReaderLayoutStabilization({ resetStableState: false });
+            }
+          }
           if (dx > 14 || dy > 14) isTouchMoved = true;
         }
       }, { passive: true });
 
+      const clearTouchDragFlag = () => {
+        isUserTouchDragging = false;
+      };
+      scrollArea.addEventListener("touchcancel", clearTouchDragFlag, { passive: true });
+
       scrollArea.addEventListener("touchend", (e) => {
+        clearTouchDragFlag();
         lastTouchEndTime = Date.now();
         const touchDuration = lastTouchEndTime - touchStartTime;
         const endX = e.changedTouches && e.changedTouches[0] ? e.changedTouches[0].clientX : touchStartX;
@@ -10106,6 +11244,14 @@ https://github.com/nodeca/pako/blob/main/LICENSE
         }
       });
 
+      scrollArea.addEventListener("wheel", (e) => {
+        if (Math.abs(e.deltaY) > 0 || Math.abs(e.deltaX) > 0) {
+          if (activeStabilizationSession) {
+            cancelReaderLayoutStabilization({ resetStableState: false });
+          }
+        }
+      }, { passive: true });
+
       scrollArea.addEventListener("click", (e) => {
         if (Date.now() - lastTouchHandledTime < 500) return;
         if (isInteractiveReaderTarget(e.target)) return;
@@ -10123,7 +11269,17 @@ https://github.com/nodeca/pako/blob/main/LICENSE
           });
         }
 
-        if (isRestoringScroll || !currentBook) return;
+        if (isRestoringScroll || activeStabilizationSession || !currentBook) return;
+
+        hasUserMovedAfterStabilize = true;
+        clearTimeout(scrollStableSnapshotTimer);
+        scrollStableSnapshotTimer = setTimeout(() => {
+          scrollStableSnapshotTimer = null;
+          if (!isRestoringScroll && !activeStabilizationSession && !isUserTouchDragging) {
+            captureStableReaderStateSnapshot({ updateBookMeta: false });
+            hasUserMovedAfterStabilize = false;
+          }
+        }, 140);
 
         const aaPanelEl = document.getElementById("panelTypography");
         const isAaPanelOpen = Boolean(aaPanelEl && !aaPanelEl.classList.contains("hidden"));
@@ -10143,17 +11299,33 @@ https://github.com/nodeca/pako/blob/main/LICENSE
       }, { passive: true });
     }
 
+    document.addEventListener("keydown", (e) => {
+      if (!isReaderViewActive()) return;
+      const tag = document.activeElement ? document.activeElement.tagName : "";
+      if (tag === "INPUT" || tag === "TEXTAREA" || document.activeElement?.isContentEditable) return;
+      if (["ArrowUp", "ArrowDown", "PageUp", "PageDown", " ", "Home", "End"].includes(e.key)) {
+        if (activeStabilizationSession) {
+          cancelReaderLayoutStabilization({ resetStableState: false });
+        }
+      }
+    });
+
     function flushPendingReaderProgress() {
       clearTimeout(scrollSaveTimer);
       scrollSaveTimer = null;
+      clearTimeout(scrollStableSnapshotTimer);
+      scrollStableSnapshotTimer = null;
       if (typeof readerConfigSaveTimer !== "undefined" && readerConfigSaveTimer) {
         clearTimeout(readerConfigSaveTimer);
         readerConfigSaveTimer = null;
         dbSave("settings", { key: "readerConfig", val: readerConfig });
       }
-      if (!currentBook || !scrollArea || isRestoringScroll) return;
+      if (!currentBook || !scrollArea || isRestoringScroll || activeStabilizationSession) return;
       const readerView = document.getElementById("viewReader");
       if (!readerView || readerView.classList.contains("hidden")) return;
+      const liveAnchor = captureReaderScrollAnchor();
+      if (!liveAnchor) return;
+      hasUserMovedAfterStabilize = false;
       const maxScroll = Math.max(1, scrollArea.scrollHeight - scrollArea.clientHeight);
       const ratio = Math.max(0, Math.min(1, scrollArea.scrollTop / maxScroll));
       const nextRatio = Number(ratio.toFixed(4));
@@ -10161,9 +11333,17 @@ https://github.com/nodeca/pako/blob/main/LICENSE
       recordReadingPaceSample(currentBook, chIdx, ratio);
       const wasStarted = Boolean(currentBook.hasStartedReading);
       currentBook.chapterScrollRatio = nextRatio;
-      const liveAnchor = captureReaderScrollAnchor();
-      if (liveAnchor) currentBook.chapterAnchor = liveAnchor;
+      currentBook.chapterAnchor = liveAnchor;
       currentBook.hasStartedReading = true;
+      lastStableReaderState = {
+        bookId: currentBook.id,
+        chapterIdx: chIdx,
+        anchor: liveAnchor,
+        ratio: nextRatio,
+        viewportW: scrollArea.clientWidth,
+        viewportH: scrollArea.clientHeight,
+        contentH: document.getElementById("readerContent")?.scrollHeight || 0
+      };
       updateReaderBottomProgressBar();
 
       const sameTarget = lastSavedProgressState.bookId === currentBook.id && lastSavedProgressState.chapter === chIdx;
@@ -10181,17 +11361,95 @@ https://github.com/nodeca/pako/blob/main/LICENSE
     });
     window.addEventListener("pagehide", flushPendingReaderProgress);
 
+    function handleReaderViewportDimensionChange() {
+      if (!isReaderViewActive()) return;
+      if (activeStabilizationSession && activeStabilizationSession.isApplyingRestore) return;
+      const sa = document.getElementById("readerScrollArea");
+      if (!sa) return;
+      const newW = sa.clientWidth;
+      const newH = sa.clientHeight;
+      if (newW <= 0 || newH <= 0) return;
+
+      const changed =
+        lastObservedViewport.w <= 0 ||
+        lastObservedViewport.h <= 0 ||
+        Math.abs(newW - lastObservedViewport.w) >= 2 ||
+        Math.abs(newH - lastObservedViewport.h) >= 2;
+      if (!changed) return;
+
+      lastObservedViewport = { w: newW, h: newH };
+      document.getElementById("directHighlightToolbar")?.classList.add("hidden");
+      document.getElementById("existingHighlightPopup")?.classList.add("hidden");
+
+      const content = document.getElementById("readerContent");
+      if (!content || getReaderAnchorBlocks().length === 0) {
+        updateReaderPaginationIndicator();
+        return;
+      }
+
+      // Use last stable anchor captured BEFORE dimensions changed (never capture post-reflow)
+      let targetAnchor = null;
+      let targetRatio = 0;
+      const curBookId = currentBook.id;
+      const curChIdx = currentBook.currentChapter || 0;
+
+      if (
+        activeStabilizationSession &&
+        activeStabilizationSession.bookId === curBookId &&
+        activeStabilizationSession.chapterIdx === curChIdx &&
+        activeStabilizationSession.anchor
+      ) {
+        targetAnchor = activeStabilizationSession.anchor;
+        targetRatio = activeStabilizationSession.ratio;
+      } else if (
+        lastStableReaderState.bookId === curBookId &&
+        lastStableReaderState.chapterIdx === curChIdx &&
+        lastStableReaderState.anchor
+      ) {
+        targetAnchor = lastStableReaderState.anchor;
+        targetRatio = lastStableReaderState.ratio;
+      } else {
+        targetAnchor = currentBook.chapterAnchor || null;
+        targetRatio = currentBook.chapterScrollRatio || 0;
+      }
+
+      if (targetAnchor || targetRatio > 0) {
+        startReaderAnchorStabilization(targetAnchor, targetRatio, {
+          renderToken: readerRenderToken,
+          reason: "viewport-resize",
+          applyImmediately: true,
+          attachAssetWatchers: true
+        });
+      } else {
+        updateReaderPaginationIndicator();
+      }
+    }
+
+    if (scrollArea && typeof ResizeObserver === "function") {
+      const viewportResizeObserver = new ResizeObserver(() => {
+        handleReaderViewportDimensionChange();
+      });
+      viewportResizeObserver.observe(scrollArea);
+    }
+
     let readerResizeDebounce = null;
     window.addEventListener("resize", () => {
-      const readerView = document.getElementById("viewReader");
-      if (!readerView || readerView.classList.contains("hidden")) return;
+      if (!isReaderViewActive()) return;
       clearTimeout(readerResizeDebounce);
       readerResizeDebounce = setTimeout(() => {
-        updateReaderPaginationIndicator();
-        document.getElementById("directHighlightToolbar")?.classList.add("hidden");
-        document.getElementById("existingHighlightPopup")?.classList.add("hidden");
-      }, 120);
+        handleReaderViewportDimensionChange();
+      }, 48);
     });
+    window.addEventListener("orientationchange", () => {
+      if (!isReaderViewActive()) return;
+      requestAnimationFrame(() => handleReaderViewportDimensionChange());
+    });
+    if (window.screen && window.screen.orientation && typeof window.screen.orientation.addEventListener === "function") {
+      window.screen.orientation.addEventListener("change", () => {
+        if (!isReaderViewActive()) return;
+        requestAnimationFrame(() => handleReaderViewportDimensionChange());
+      });
+    }
 
     function handleReaderZonedTap(clientX) {
       const sel = window.getSelection();
@@ -14961,15 +16219,11 @@ https://github.com/nodeca/pako/blob/main/LICENSE
     }
 
     safeOn("btnReadingModeScroll", "click", () => {
-      readerConfig.readingMode = "scroll";
-      updateReadingModeUI();
-      dbSave("settings", { key: "readerConfig", val: readerConfig });
+      switchReaderReadingMode("scroll");
     });
 
     safeOn("btnReadingModePaginated", "click", () => {
-      readerConfig.readingMode = "paginated";
-      updateReadingModeUI();
-      dbSave("settings", { key: "readerConfig", val: readerConfig });
+      switchReaderReadingMode("paginated");
     });
 
     safeOn("btnAlignLeft", "click", () => {
