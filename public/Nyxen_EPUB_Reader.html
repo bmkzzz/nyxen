@@ -12546,17 +12546,43 @@ https://github.com/nodeca/pako/blob/main/LICENSE
         return;
       }
 
-      const grouped = {};
+      const groupMap = new Map();
       list.forEach(hl => {
-        const chKey = hl.chapterTitle || `${currentLang === 'es' ? 'Capítulo' : 'Chapter'} ${(hl.chapterIndex ?? 0) + 1}`;
-        if (!grouped[chKey]) grouped[chKey] = [];
-        grouped[chKey].push(hl);
+        const rawIdx = hl && hl.chapterIndex;
+        const hasValidIdx = typeof rawIdx === "number" && Number.isFinite(rawIdx) && rawIdx >= 0;
+        const normalizedIdx = hasValidIdx ? Math.trunc(rawIdx) : null;
+        const sortIndex = hasValidIdx ? normalizedIdx : Number.POSITIVE_INFINITY;
+        const rawTitle = (hl && hl.chapterTitle != null && String(hl.chapterTitle).length > 0)
+          ? String(hl.chapterTitle)
+          : "";
+        const chTitle = rawTitle || (
+          hasValidIdx
+            ? `${currentLang === 'es' ? 'Capítulo' : 'Chapter'} ${normalizedIdx + 1}`
+            : (currentLang === 'es' ? 'Sin capítulo' : 'No chapter')
+        );
+        const groupKey = `${hasValidIdx ? normalizedIdx : 'invalid'}::${chTitle}`;
+        if (!groupMap.has(groupKey)) {
+          groupMap.set(groupKey, {
+            title: chTitle,
+            sortIndex,
+            order: groupMap.size,
+            items: []
+          });
+        }
+        groupMap.get(groupKey).items.push(hl);
+      });
+
+      const sortedGroups = Array.from(groupMap.values()).sort((a, b) => {
+        if (a.sortIndex !== b.sortIndex) {
+          return a.sortIndex - b.sortIndex;
+        }
+        return a.order - b.order;
       });
 
       const mainListContainer = document.createElement("div");
       mainListContainer.className = "space-y-6 pb-6";
 
-      for (const [chTitle, items] of Object.entries(grouped)) {
+      for (const { title: chTitle, items } of sortedGroups) {
         const groupBlock = document.createElement("div");
         groupBlock.className = "space-y-3";
 
