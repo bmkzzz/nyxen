@@ -41,9 +41,12 @@
   let lastHydratedBookId = null;
   let lastIssuedProgressTs = 0;
   let recoveryDrainScheduled = false;
+  let libraryClearEpoch = 0;
 
   const DB_OPEN_TIMEOUT_MS = 4500;
   const DB_RETRY_COOLDOWN_MS = 8000;
+  const MIRROR_PREFIX = "nyxen_progress_mirror_v1:";
+  const PENDING_CLEANUPS_KEY = "pendingAssetCleanups";
   const STORAGE_SESSION_ID = (
     globalScope.crypto && typeof globalScope.crypto.randomUUID === "function"
       ? globalScope.crypto.randomUUID()
@@ -53,9 +56,13 @@
   const activeObjectUrls = new Map();
   const bookWriteQueues = new Map();
   const knownDiskRevisionByBook = new Map();
+  const knownDiskStateByBook = new Map();
+  const bookInstanceIdByBook = new Map();
+  const bookGenerationByBook = new Map();
   const bookSeqCounters = new Map();
   const pendingRecoveryProgressPatches = new Map();
   const deletedBookIdsInSession = new Set();
+  let pendingAssetCleanupsRam = {};
 
   // UI & state integration hooks configured by the host application
   const hooks = {
@@ -132,21 +139,142 @@
     return lastIssuedProgressTs;
   }
 
-  function registerBookDiskRevision(record) {
-    if (!record || !record.id) return;
-    const rev = typeof record.progressRevision === "number" && Number.isFinite(record.progressRevision)
-      ? record.progressRevision
-      : 0;
-    const prevKnown = knownDiskRevisionByBook.get(record.id);
-    if (prevKnown === undefined || rev > prevKnown) {
-      knownDiskRevisionByBook.set(record.id, rev);
+  function generateBookInstanceId() {
+    if (globalScope.crypto && typeof globalScope.crypto.randomUUID === "function") {
+      return `inst_${globalScope.crypto.randomUUID()}`;
     }
-    const diskSeq = typeof record.progressSeq === "number" && Number.isFinite(record.progressSeq)
-      ? record.progressSeq
-      : 0;
-    const curSeq = bookSeqCounters.get(record.id) || 0;
-    if (diskSeq > curSeq) {
-      bookSeqCounters.set(record.id, diskSeq);
+    return `inst_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`;
+  }
+
+  function getBookGeneration(bookId) {
+    return bookGenerationByBook.get(bookId) || 0;
+  }
+
+  function bumpBookGeneration(bookId) {
+    if (!bookId) return 0;
+    const next = getBookGeneration(bookId) + 1;
+    bookGenerationByBook.set(bookId, next);
+    return next;
+  }
+
+  function bumpAllTrackedBookGenerations() {
+    const allIds = new Set([
+      ...bookGenerationByBook.keys(),
+      ...bookWriteQueues.keys(),
+      ...knownDiskRevisionByBook.keys(),
+      ...knownDiskStateByBook.keys(),
+      ...bookInstanceIdByBook.keys()
+    ]);
+    for (const id of allIds) {
+      bumpBookGeneration(id);
+    }
+  }
+
+  function normalizeDiskProgressRecord(record) {
+    if (!record || typeof record !== "object") {
+      return {
+        valid: false,
+        rev: 0,
+        seq: 0,
+        sess: null,
+        hasStartedReading: false,
+        currentChapter: 0,
+        chapterScrollRatio: 0,
+        bookInstanceId: null
+      };
+    }
+
+    let valid = true;
+
+    let rev = 0;
+    if (record.progressRevision !== undefined && record.progressRevision !== null) {
+      if (typeof record.progressRevision === "number" && Number.isFinite(record.progressRevision) && record.progressRevision >= 0) {
+        rev = record.progressRevision;
+      } else {
+        valid = false;
+      }
+    }
+
+    let seq = 0;
+    if (record.progressSeq !== undefined && record.progressSeq !== null) {
+      if (typeof record.progressSeq === "number" && Number.isFinite(record.progressSeq) && record.progressSeq >= 0) {
+        seq = record.progressSeq;
+      } else {
+        valid = false;
+      }
+    }
+
+    let sess = null;
+    if (record.progressSessionId !== undefined && record.progressSessionId !== null && record.progressSessionId !== "") {
+      if (typeof record.progressSessionId === "string") {
+        sess = record.progressSessionId;
+      } else {
+        valid = false;
+      }
+    }
+
+    let currentChapter = 0;
+    if (record.currentChapter !== undefined && record.currentChapter !== null) {
+      if (typeof record.currentChapter === "number" && Number.isFinite(record.currentChapter) && record.currentChapter >= 0) {
+        currentChapter = record.currentChapter;
+      } else {
+        valid = false;
+      }
+    }
+
+    let chapterScrollRatio = 0;
+    if (record.chapterScrollRatio !== undefined && record.chapterScrollRatio !== null) {
+      if (typeof record.chapterScrollRatio === "number" && Number.isFinite(record.chapterScrollRatio) && record.chapterScrollRatio >= 0) {
+        chapterScrollRatio = Math.min(1, record.chapterScrollRatio);
+      } else {
+        valid = false;
+      }
+    }
+
+    const bookInstanceId = typeof record.bookInstanceId === "string" && record.bookInstanceId.length > 0
+      ? record.bookInstanceId
+      : null;
+
+    return {
+      valid,
+      rev,
+      seq,
+      sess,
+      hasStartedReading: Boolean(record.hasStartedReading),
+      currentChapter,
+      chapterScrollRatio,
+      bookInstanceId
+    };
+  }
+
+  function registerBookDiskRevision(record, options = {}) {
+    if (!record || !record.id) return;
+    const norm = normalizeDiskProgressRecord(record);
+    const force = Boolean(options.force);
+    const prevKnown = knownDiskRevisionByBook.get(record.id);
+    const prevState = knownDiskStateByBook.get(record.id);
+
+    if (norm.valid) {
+      const shouldUpdate = force ||
+        prevKnown === undefined ||
+        norm.rev > prevKnown ||
+        (norm.rev === prevKnown && (!prevState || norm.sess !== prevState.sess || norm.seq > prevState.seq));
+      if (shouldUpdate) {
+        knownDiskRevisionByBook.set(record.id, norm.rev);
+        knownDiskStateByBook.set(record.id, {
+          rev: norm.rev,
+          seq: norm.seq,
+          sess: norm.sess
+        });
+      }
+      const curSeq = bookSeqCounters.get(record.id) || 0;
+      if (norm.seq > curSeq) {
+        bookSeqCounters.set(record.id, norm.seq);
+      }
+    }
+
+    if (norm.bookInstanceId) {
+      bookInstanceIdByBook.set(record.id, norm.bookInstanceId);
     }
   }
 
@@ -154,9 +282,166 @@
     if (!Array.isArray(records)) return;
     for (let i = 0; i < records.length; i++) {
       if (records[i] && records[i].id) {
-        registerBookDiskRevision(records[i]);
+        registerBookDiskRevision(records[i], { force: true });
       }
     }
+  }
+
+  // ---- Espejo localStorage (propietario único: storage.js) ----
+  function getLocalStorageSafe() {
+    try {
+      if (globalScope && globalScope.localStorage) {
+        return globalScope.localStorage;
+      }
+    } catch (e) {}
+    return null;
+  }
+
+  function getMirrorKey(bookId) {
+    return `${MIRROR_PREFIX}${bookId}`;
+  }
+
+  function readProgressMirror(bookId) {
+    if (!bookId) return null;
+    const ls = getLocalStorageSafe();
+    if (!ls) return null;
+    try {
+      const raw = ls.getItem(getMirrorKey(bookId));
+      if (!raw) return null;
+      const parsed = JSON.parse(raw);
+      return parsed && typeof parsed === "object" ? parsed : null;
+    } catch (e) {
+      return null;
+    }
+  }
+
+  function writeProgressMirror(bookId, payload) {
+    if (!bookId || !payload || typeof payload !== "object") return false;
+    const ls = getLocalStorageSafe();
+    if (!ls) return false;
+    try {
+      ls.setItem(getMirrorKey(bookId), JSON.stringify(payload));
+      return true;
+    } catch (e) {
+      return false;
+    }
+  }
+
+  function removeProgressMirror(bookId) {
+    if (!bookId) return false;
+    const ls = getLocalStorageSafe();
+    if (!ls) return false;
+    try {
+      ls.removeItem(getMirrorKey(bookId));
+      return true;
+    } catch (e) {
+      return false;
+    }
+  }
+
+  function listMirrorBookIds() {
+    const ls = getLocalStorageSafe();
+    if (!ls) return [];
+    const ids = [];
+    try {
+      for (let i = 0; i < ls.length; i++) {
+        const key = ls.key(i);
+        if (typeof key === "string" && key.startsWith(MIRROR_PREFIX)) {
+          const bookId = key.slice(MIRROR_PREFIX.length);
+          if (bookId) ids.push(bookId);
+        }
+      }
+    } catch (e) {}
+    return ids;
+  }
+
+  function clearAllProgressMirrors() {
+    const ids = listMirrorBookIds();
+    for (let i = 0; i < ids.length; i++) {
+      removeProgressMirror(ids[i]);
+    }
+  }
+
+  function isValidMirrorStructure(mirror, expectedBookId) {
+    if (!mirror || typeof mirror !== "object") return false;
+    if (mirror.version !== 1) return false;
+    if (typeof mirror.bookId !== "string" || !mirror.bookId || mirror.bookId !== expectedBookId) return false;
+    if (typeof mirror.confirmedInIdb !== "boolean") return false;
+    if (typeof mirror.progressSessionId !== "string" || !mirror.progressSessionId) return false;
+    if (typeof mirror.progressSeq !== "number" || !Number.isFinite(mirror.progressSeq) || mirror.progressSeq <= 0) return false;
+    if (typeof mirror.currentChapter !== "number" || !Number.isFinite(mirror.currentChapter) || mirror.currentChapter < 0) return false;
+    if (typeof mirror.chapterScrollRatio !== "number" || !Number.isFinite(mirror.chapterScrollRatio) || mirror.chapterScrollRatio < 0 || mirror.chapterScrollRatio > 1) return false;
+    if (typeof mirror.hasStartedReading !== "boolean") return false;
+    if (typeof mirror.bookInstanceId !== "string" || !mirror.bookInstanceId) return false;
+    if (mirror.chapterAnchor !== null && mirror.chapterAnchor !== undefined && typeof mirror.chapterAnchor !== "object") return false;
+
+    if (mirror.confirmedInIdb) {
+      if (typeof mirror.progressRevision !== "number" || !Number.isFinite(mirror.progressRevision) || mirror.progressRevision < 0) {
+        return false;
+      }
+    } else {
+      if (typeof mirror.baseRevisionKnown !== "boolean") return false;
+      if (mirror.baseRevisionKnown) {
+        if (typeof mirror.baseDiskRevision !== "number" || !Number.isFinite(mirror.baseDiskRevision) || mirror.baseDiskRevision < 0) {
+          return false;
+        }
+        if (typeof mirror.baseDiskSeq !== "number" || !Number.isFinite(mirror.baseDiskSeq) || mirror.baseDiskSeq < 0) {
+          return false;
+        }
+        if (!(mirror.baseDiskSessionId === null || (typeof mirror.baseDiskSessionId === "string" && mirror.baseDiskSessionId.length > 0))) {
+          return false;
+        }
+      }
+    }
+    return true;
+  }
+
+  function buildConfirmedMirrorFromDiskRecord(record) {
+    if (!record || !record.id) return null;
+    const norm = normalizeDiskProgressRecord(record);
+    if (!norm.valid || !norm.bookInstanceId) return null;
+    if (!norm.hasStartedReading && norm.rev === 0 && norm.seq === 0 && norm.currentChapter === 0 && norm.chapterScrollRatio === 0) {
+      return null;
+    }
+    if (!norm.sess || norm.seq <= 0) {
+      return null;
+    }
+    return {
+      version: 1,
+      bookId: record.id,
+      bookInstanceId: norm.bookInstanceId,
+      confirmedInIdb: true,
+      progressRevision: norm.rev,
+      progressSessionId: norm.sess,
+      progressSeq: norm.seq,
+      baseRevisionKnown: true,
+      baseDiskRevision: norm.rev,
+      baseDiskSessionId: norm.sess,
+      baseDiskSeq: norm.seq,
+      currentChapter: norm.currentChapter,
+      chapterScrollRatio: norm.chapterScrollRatio,
+      chapterAnchor: record.chapterAnchor && typeof record.chapterAnchor === "object" ? record.chapterAnchor : null,
+      hasStartedReading: norm.hasStartedReading
+    };
+  }
+
+  function syncMirrorFromDiskRecord(record) {
+    if (!record || !record.id) return false;
+    const norm = normalizeDiskProgressRecord(record);
+    if (!norm.valid || !norm.bookInstanceId) {
+      removeProgressMirror(record.id);
+      return false;
+    }
+    if (!norm.hasStartedReading && norm.rev === 0 && norm.seq === 0 && norm.currentChapter === 0 && norm.chapterScrollRatio === 0) {
+      removeProgressMirror(record.id);
+      return false;
+    }
+    const payload = buildConfirmedMirrorFromDiskRecord(record);
+    if (!payload) {
+      removeProgressMirror(record.id);
+      return false;
+    }
+    return writeProgressMirror(record.id, payload);
   }
 
   function resetRetryCooldown() {
@@ -372,11 +657,11 @@
     return false;
   }
 
-  async function dbSave(storeName, item) {
+  async function dbSaveStrictIdb(storeName, item) {
     let conn = await ensureDb();
     if (!conn) {
       putInMemoryStore(storeName, item);
-      return true;
+      return { ok: true, persistedToIdb: false, persistedToMemory: true, error: null };
     }
 
     const attempt = (targetConn) => new Promise((resolve) => {
@@ -389,22 +674,25 @@
       try {
         const tx = targetConn.transaction(storeName, "readwrite");
         tx.objectStore(storeName).put(item);
-        tx.oncomplete = () => finish({ ok: true, retryableInvalidState: false });
+        tx.oncomplete = () => {
+          putInMemoryStore(storeName, item);
+          finish({ ok: true, persistedToIdb: true, persistedToMemory: false, retryableInvalidState: false, error: null });
+        };
         tx.onerror = (ev) => {
-          const err = tx.error || ev?.target?.error;
+          const err = tx.error || ev?.target?.error || null;
           if (isQuotaError(err)) notifyQuotaExceeded();
           const retryable = handleTransactionFailureAndMaybeReset(targetConn, err);
-          finish({ ok: false, retryableInvalidState: retryable });
+          finish({ ok: false, persistedToIdb: false, persistedToMemory: false, retryableInvalidState: retryable, error: err });
         };
         tx.onabort = () => {
-          const err = tx.error;
+          const err = tx.error || null;
           if (isQuotaError(err)) notifyQuotaExceeded();
           const retryable = handleTransactionFailureAndMaybeReset(targetConn, err);
-          finish({ ok: false, retryableInvalidState: retryable });
+          finish({ ok: false, persistedToIdb: false, persistedToMemory: false, retryableInvalidState: retryable, error: err });
         };
       } catch (e) {
         const retryable = handleTransactionFailureAndMaybeReset(targetConn, e);
-        finish({ ok: false, retryableInvalidState: retryable });
+        finish({ ok: false, persistedToIdb: false, persistedToMemory: false, retryableInvalidState: retryable, error: e });
       }
     });
 
@@ -416,6 +704,16 @@
         res = await attempt(conn);
       }
     }
+    return {
+      ok: Boolean(res.ok),
+      persistedToIdb: Boolean(res.persistedToIdb),
+      persistedToMemory: Boolean(res.persistedToMemory),
+      error: res.error || null
+    };
+  }
+
+  async function dbSave(storeName, item) {
+    const res = await dbSaveStrictIdb(storeName, item);
     return Boolean(res.ok);
   }
 
@@ -506,53 +804,268 @@
     });
   }
 
-  async function dbClear(storeName) {
-    if (storeName === "books") {
-      knownDiskRevisionByBook.clear();
-      bookSeqCounters.clear();
-      pendingRecoveryProgressPatches.clear();
-      deletedBookIdsInSession.clear();
+  function cloneCleanupsMap(mapObj) {
+    const out = {};
+    if (!mapObj || typeof mapObj !== "object") return out;
+    const entries = Object.entries(mapObj);
+    for (let i = 0; i < entries.length; i++) {
+      const bId = entries[i][0];
+      const job = entries[i][1];
+      if (!bId || !job || typeof job !== "object") continue;
+      out[bId] = {
+        bookId: job.bookId || bId,
+        bookInstanceId: job.bookInstanceId || null,
+        contentKeys: Array.isArray(job.contentKeys) ? job.contentKeys.slice() : [],
+        assetKeys: Array.isArray(job.assetKeys) ? job.assetKeys.slice() : [],
+        settingsKeys: Array.isArray(job.settingsKeys) ? job.settingsKeys.slice() : [],
+        failedStores: Array.isArray(job.failedStores) ? job.failedStores.slice() : [],
+        failedAt: typeof job.failedAt === "number" ? job.failedAt : Date.now()
+      };
     }
-    const conn = await ensureDb();
-    return new Promise((resolve) => {
-      inMemoryDb[storeName] = [];
-      if (!conn) {
-        resolve();
-        return;
-      }
-
-      try {
-        const tx = conn.transaction(storeName, "readwrite");
-        tx.objectStore(storeName).clear();
-        tx.oncomplete = () => resolve();
-        tx.onerror = () => resolve();
-      } catch (e) {
-        resolve();
-      }
-    });
+    return out;
   }
 
-  async function dbDelete(storeName, key) {
-    const conn = await ensureDb();
-    return new Promise((resolve) => {
-      const keyProp = STORE_KEY_PATHS[storeName] || "key";
+  function hasPendingCleanupKeys(job) {
+    if (!job || typeof job !== "object") return false;
+    return (
+      (Array.isArray(job.contentKeys) && job.contentKeys.length > 0) ||
+      (Array.isArray(job.assetKeys) && job.assetKeys.length > 0) ||
+      (Array.isArray(job.settingsKeys) && job.settingsKeys.length > 0)
+    );
+  }
+
+  function pruneJobStoreDependencies(job, storeName, confirmedKeysSet = null) {
+    if (!job || typeof job !== "object") return false;
+    if (storeName === "bookContents") {
+      if (confirmedKeysSet) {
+        job.contentKeys = (job.contentKeys || []).filter(k => !confirmedKeysSet.has(k));
+      } else {
+        job.contentKeys = [];
+      }
+    } else if (storeName === "bookAssets") {
+      if (confirmedKeysSet) {
+        job.assetKeys = (job.assetKeys || []).filter(k => !confirmedKeysSet.has(k));
+      } else {
+        job.assetKeys = [];
+      }
+    } else if (storeName === "settings") {
+      if (confirmedKeysSet) {
+        job.settingsKeys = (job.settingsKeys || []).filter(k => !confirmedKeysSet.has(k));
+      } else {
+        job.settingsKeys = [];
+      }
+    }
+    const remainingStores = [];
+    if (Array.isArray(job.contentKeys) && job.contentKeys.length > 0) remainingStores.push("bookContents");
+    if (Array.isArray(job.settingsKeys) && job.settingsKeys.length > 0) remainingStores.push("settings");
+    if (Array.isArray(job.assetKeys) && job.assetKeys.length > 0) remainingStores.push("bookAssets");
+    job.failedStores = remainingStores;
+    return hasPendingCleanupKeys(job);
+  }
+
+  async function persistPendingAssetCleanupsMap(nextMap) {
+    const clean = {};
+    const entries = Object.entries(nextMap || {});
+    for (let i = 0; i < entries.length; i++) {
+      const id = entries[i][0];
+      const job = entries[i][1];
+      if (id && hasPendingCleanupKeys(job)) {
+        clean[id] = job;
+      }
+    }
+    pendingAssetCleanupsRam = clean;
+    if (Object.keys(clean).length === 0) {
+      const delRes = await dbDelete("settings", PENDING_CLEANUPS_KEY, { skipCleanupPrune: true });
+      return {
+        ok: Boolean(delRes.ok),
+        persistedToIdb: Boolean(delRes.persistedToIdb),
+        persistedToMemory: Boolean(delRes.persistedToMemory),
+        error: delRes.error || null
+      };
+    }
+    return await dbSaveStrictIdb("settings", { key: PENDING_CLEANUPS_KEY, val: clean });
+  }
+
+  async function prunePendingCleanupsAfterConfirmedStoreMutation(storeName, confirmedKeysSet = null) {
+    if (storeName !== "bookContents" && storeName !== "bookAssets" && storeName !== "settings") return;
+    let diskRec = null;
+    try {
+      diskRec = await dbGet("settings", PENDING_CLEANUPS_KEY);
+    } catch (e) {}
+    const diskMap = diskRec && diskRec.val && typeof diskRec.val === "object" ? diskRec.val : {};
+    const merged = cloneCleanupsMap({ ...diskMap, ...pendingAssetCleanupsRam });
+    const ids = Object.keys(merged);
+    if (ids.length === 0) return;
+    let changed = false;
+    for (let i = 0; i < ids.length; i++) {
+      const id = ids[i];
+      const job = merged[id];
+      const hadBefore = JSON.stringify(job);
+      const stillNeeded = pruneJobStoreDependencies(job, storeName, confirmedKeysSet);
+      if (!stillNeeded) {
+        delete merged[id];
+        changed = true;
+      } else if (JSON.stringify(job) !== hadBefore) {
+        changed = true;
+      }
+    }
+    if (changed) {
+      await persistPendingAssetCleanupsMap(merged);
+    }
+  }
+
+  async function dbClear(storeName) {
+    if (storeName === "books") {
+      libraryClearEpoch++;
+      bumpAllTrackedBookGenerations();
+      const pendingQueues = Array.from(bookWriteQueues.values());
+      if (pendingQueues.length > 0) {
+        await Promise.allSettled(pendingQueues);
+      }
+    }
+
+    let conn = await ensureDb();
+    if (!conn) {
+      inMemoryDb[storeName] = [];
+      if (storeName === "books") {
+        // Solo RAM temporal: limpiar estado de sesión RAM, pero NO borrar espejos localStorage
+        // ni pendingAssetCleanups porque IndexedDB en disco no fue vaciado.
+        knownDiskRevisionByBook.clear();
+        knownDiskStateByBook.clear();
+        bookInstanceIdByBook.clear();
+        bookSeqCounters.clear();
+        pendingRecoveryProgressPatches.clear();
+        deletedBookIdsInSession.clear();
+      } else if (storeName === "settings") {
+        pendingAssetCleanupsRam = {};
+      }
+      return { ok: true, persistedToIdb: false, persistedToMemory: true, error: null };
+    }
+
+    const attempt = (targetConn) => new Promise((resolve) => {
+      let settled = false;
+      const finish = (res) => {
+        if (settled) return;
+        settled = true;
+        resolve(res);
+      };
+      try {
+        const tx = targetConn.transaction(storeName, "readwrite");
+        tx.objectStore(storeName).clear();
+        tx.oncomplete = () => finish({ ok: true, persistedToIdb: true, persistedToMemory: false, retryableInvalidState: false, error: null });
+        tx.onerror = (ev) => {
+          const err = tx.error || ev?.target?.error || null;
+          const retryable = handleTransactionFailureAndMaybeReset(targetConn, err);
+          finish({ ok: false, persistedToIdb: false, persistedToMemory: false, retryableInvalidState: retryable, error: err });
+        };
+        tx.onabort = () => {
+          const err = tx.error || null;
+          const retryable = handleTransactionFailureAndMaybeReset(targetConn, err);
+          finish({ ok: false, persistedToIdb: false, persistedToMemory: false, retryableInvalidState: retryable, error: err });
+        };
+      } catch (e) {
+        const retryable = handleTransactionFailureAndMaybeReset(targetConn, e);
+        finish({ ok: false, persistedToIdb: false, persistedToMemory: false, retryableInvalidState: retryable, error: e });
+      }
+    });
+
+    let res = await attempt(conn);
+    if (!res.ok && res.retryableInvalidState) {
+      resetRetryCooldown();
+      conn = await ensureDb();
+      if (conn) {
+        res = await attempt(conn);
+      }
+    }
+
+    if (res.ok && res.persistedToIdb) {
+      inMemoryDb[storeName] = [];
+      if (storeName === "books") {
+        knownDiskRevisionByBook.clear();
+        knownDiskStateByBook.clear();
+        bookInstanceIdByBook.clear();
+        bookSeqCounters.clear();
+        pendingRecoveryProgressPatches.clear();
+        deletedBookIdsInSession.clear();
+        clearAllProgressMirrors();
+        // NO eliminar pendingAssetCleanups aquí: los recursos asociados (bookContents/bookAssets/settings)
+        // solo pueden considerarse limpios cuando sus propios stores confirmen vaciado en IDB.
+      } else if (storeName === "bookContents" || storeName === "bookAssets") {
+        await prunePendingCleanupsAfterConfirmedStoreMutation(storeName, null);
+      } else if (storeName === "settings") {
+        pendingAssetCleanupsRam = {};
+      }
+    }
+
+    return {
+      ok: Boolean(res.ok),
+      persistedToIdb: Boolean(res.persistedToIdb),
+      persistedToMemory: Boolean(res.persistedToMemory),
+      error: res.error || null
+    };
+  }
+
+  async function dbDelete(storeName, key, options = {}) {
+    const keyProp = STORE_KEY_PATHS[storeName] || "key";
+    let conn = await ensureDb();
+    if (!conn) {
       if (inMemoryDb[storeName]) {
         inMemoryDb[storeName] = inMemoryDb[storeName].filter(x => x && x[keyProp] !== key);
       }
-      if (!conn) {
-        resolve();
-        return;
-      }
+      return { ok: true, persistedToIdb: false, persistedToMemory: true, error: null };
+    }
 
+    const attempt = (targetConn) => new Promise((resolve) => {
+      let settled = false;
+      const finish = (res) => {
+        if (settled) return;
+        settled = true;
+        resolve(res);
+      };
       try {
-        const tx = conn.transaction(storeName, "readwrite");
+        const tx = targetConn.transaction(storeName, "readwrite");
         tx.objectStore(storeName).delete(key);
-        tx.oncomplete = () => resolve();
-        tx.onerror = () => resolve();
+        tx.oncomplete = () => finish({ ok: true, persistedToIdb: true, persistedToMemory: false, retryableInvalidState: false, error: null });
+        tx.onerror = (ev) => {
+          const err = tx.error || ev?.target?.error || null;
+          const retryable = handleTransactionFailureAndMaybeReset(targetConn, err);
+          finish({ ok: false, persistedToIdb: false, persistedToMemory: false, retryableInvalidState: retryable, error: err });
+        };
+        tx.onabort = () => {
+          const err = tx.error || null;
+          const retryable = handleTransactionFailureAndMaybeReset(targetConn, err);
+          finish({ ok: false, persistedToIdb: false, persistedToMemory: false, retryableInvalidState: retryable, error: err });
+        };
       } catch (e) {
-        resolve();
+        const retryable = handleTransactionFailureAndMaybeReset(targetConn, e);
+        finish({ ok: false, persistedToIdb: false, persistedToMemory: false, retryableInvalidState: retryable, error: e });
       }
     });
+
+    let res = await attempt(conn);
+    if (!res.ok && res.retryableInvalidState) {
+      resetRetryCooldown();
+      conn = await ensureDb();
+      if (conn) {
+        res = await attempt(conn);
+      }
+    }
+
+    if (res.ok && res.persistedToIdb) {
+      if (inMemoryDb[storeName]) {
+        inMemoryDb[storeName] = inMemoryDb[storeName].filter(x => x && x[keyProp] !== key);
+      }
+      if (!options.skipCleanupPrune && (storeName === "bookContents" || storeName === "bookAssets" || storeName === "settings") && key !== PENDING_CLEANUPS_KEY) {
+        await prunePendingCleanupsAfterConfirmedStoreMutation(storeName, new Set([key]));
+      }
+    }
+
+    return {
+      ok: Boolean(res.ok),
+      persistedToIdb: Boolean(res.persistedToIdb),
+      persistedToMemory: Boolean(res.persistedToMemory),
+      error: res.error || null
+    };
   }
 
   async function dbSaveBatch(storeName, items, batchSize = 25) {
@@ -627,32 +1140,149 @@
     });
   }
 
-  async function dbDeleteBatch(storeName, keys, batchSize = 40) {
-    if (!Array.isArray(keys) || keys.length === 0) return;
+  async function dbDeleteBatch(storeName, keys, batchSize = 40, options = {}) {
+    if (!Array.isArray(keys) || keys.length === 0) {
+      return {
+        ok: true,
+        persistedToIdb: Boolean(db),
+        persistedToMemory: false,
+        deletedCount: 0,
+        failedKeys: [],
+        error: null
+      };
+    }
+
+    const uniqueKeys = [];
+    const seen = new Set();
+    for (let i = 0; i < keys.length; i++) {
+      const k = keys[i];
+      if (k !== undefined && k !== null && !seen.has(k)) {
+        seen.add(k);
+        uniqueKeys.push(k);
+      }
+    }
+    if (uniqueKeys.length === 0) {
+      return {
+        ok: true,
+        persistedToIdb: Boolean(db),
+        persistedToMemory: false,
+        deletedCount: 0,
+        failedKeys: [],
+        error: null
+      };
+    }
+
     const keyProp = STORE_KEY_PATHS[storeName] || "key";
-    if (inMemoryDb[storeName]) {
-      const delSet = new Set(keys);
-      inMemoryDb[storeName] = inMemoryDb[storeName].filter(x => x && !delSet.has(x[keyProp]));
+    let conn = await ensureDb();
+    if (!conn) {
+      if (inMemoryDb[storeName]) {
+        const delSet = new Set(uniqueKeys);
+        inMemoryDb[storeName] = inMemoryDb[storeName].filter(x => x && !delSet.has(x[keyProp]));
+      }
+      return {
+        ok: true,
+        persistedToIdb: false,
+        persistedToMemory: true,
+        deletedCount: uniqueKeys.length,
+        failedKeys: [],
+        error: null
+      };
     }
-    const conn = await ensureDb();
-    if (!conn) return;
-    for (let i = 0; i < keys.length; i += batchSize) {
-      const chunk = keys.slice(i, i + batchSize);
-      await new Promise((resolve) => {
-        try {
-          const tx = conn.transaction(storeName, "readwrite");
-          const store = tx.objectStore(storeName);
-          for (let j = 0; j < chunk.length; j++) {
-            store.delete(chunk[j]);
-          }
-          tx.oncomplete = () => resolve();
-          tx.onerror = () => resolve();
-          tx.onabort = () => resolve();
-        } catch (e) {
-          resolve();
+
+    const runChunk = (targetConn, chunk) => new Promise((resolve) => {
+      let settled = false;
+      const finish = (res) => {
+        if (settled) return;
+        settled = true;
+        resolve(res);
+      };
+      try {
+        const tx = targetConn.transaction(storeName, "readwrite");
+        const store = tx.objectStore(storeName);
+        for (let j = 0; j < chunk.length; j++) {
+          store.delete(chunk[j]);
         }
-      });
+        tx.oncomplete = () => finish({ ok: true, retryableInvalidState: false, error: null });
+        tx.onerror = (ev) => {
+          const err = tx.error || ev?.target?.error || null;
+          const retryable = handleTransactionFailureAndMaybeReset(targetConn, err);
+          finish({ ok: false, retryableInvalidState: retryable, error: err });
+        };
+        tx.onabort = () => {
+          const err = tx.error || null;
+          const retryable = handleTransactionFailureAndMaybeReset(targetConn, err);
+          finish({ ok: false, retryableInvalidState: retryable, error: err });
+        };
+      } catch (e) {
+        const retryable = handleTransactionFailureAndMaybeReset(targetConn, e);
+        finish({ ok: false, retryableInvalidState: retryable, error: e });
+      }
+    });
+
+    let deletedCount = 0;
+    const confirmedKeys = [];
+    const failedKeys = [];
+    let firstError = null;
+    const step = Math.max(1, batchSize || 40);
+
+    for (let i = 0; i < uniqueKeys.length; i += step) {
+      const chunk = uniqueKeys.slice(i, i + step);
+      let activeConn = conn || await ensureDb();
+      if (!activeConn) {
+        if (!firstError) firstError = new Error("IndexedDB connection lost during batch delete");
+        for (let k = 0; k < chunk.length; k++) failedKeys.push(chunk[k]);
+        continue;
+      }
+
+      let chunkRes = await runChunk(activeConn, chunk);
+      if (!chunkRes.ok && chunkRes.retryableInvalidState) {
+        resetRetryCooldown();
+        activeConn = await ensureDb();
+        conn = activeConn;
+        if (activeConn) {
+          chunkRes = await runChunk(activeConn, chunk);
+        }
+      }
+
+      if (chunkRes.ok) {
+        if (inMemoryDb[storeName]) {
+          const chunkSet = new Set(chunk);
+          inMemoryDb[storeName] = inMemoryDb[storeName].filter(x => x && !chunkSet.has(x[keyProp]));
+        }
+        deletedCount += chunk.length;
+        for (let k = 0; k < chunk.length; k++) confirmedKeys.push(chunk[k]);
+      } else {
+        if (!firstError && chunkRes.error) firstError = chunkRes.error;
+        for (let k = 0; k < chunk.length; k++) failedKeys.push(chunk[k]);
+      }
     }
+
+    if (!options.skipCleanupPrune && confirmedKeys.length > 0 && (storeName === "bookContents" || storeName === "bookAssets" || storeName === "settings")) {
+      const confirmedSet = new Set(confirmedKeys.filter(k => k !== PENDING_CLEANUPS_KEY));
+      if (confirmedSet.size > 0) {
+        await prunePendingCleanupsAfterConfirmedStoreMutation(storeName, confirmedSet);
+      }
+    }
+
+    if (failedKeys.length === 0) {
+      return {
+        ok: true,
+        persistedToIdb: true,
+        persistedToMemory: false,
+        deletedCount,
+        failedKeys: [],
+        error: null
+      };
+    }
+
+    return {
+      ok: false,
+      persistedToIdb: false,
+      persistedToMemory: false,
+      deletedCount,
+      failedKeys,
+      error: firstError || new Error("Partial or failed batch delete in IndexedDB")
+    };
   }
 
   // Asset / ObjectURL management
@@ -833,6 +1463,9 @@
         ? book.chapters.filter(c => c.isFavorite).map(c => c.index)
         : (book.favoriteChapters || [])
     };
+    if (typeof book.bookInstanceId === "string" && book.bookInstanceId) {
+      metaRecord.bookInstanceId = book.bookInstanceId;
+    }
     if (typeof book.progressRevision === "number" && Number.isFinite(book.progressRevision)) {
       metaRecord.progressRevision = book.progressRevision;
     }
@@ -850,7 +1483,7 @@
 
   function syncBookCachesAfterCommit(record, options = {}) {
     if (!record || !record.id) return;
-    registerBookDiskRevision(record);
+    registerBookDiskRevision(record, { force: Boolean(options.forceSyncProgress) });
 
     const forceSyncProgress = Boolean(options.forceSyncProgress);
     const preserveNewerInMemoryProgress = Boolean(options.preserveNewerInMemoryProgress);
@@ -947,7 +1580,25 @@
       };
     }
 
+    const capturedGen = options.capturedGen !== undefined ? options.capturedGen : getBookGeneration(bookId);
+    const capturedClearEpoch = options.capturedClearEpoch !== undefined ? options.capturedClearEpoch : libraryClearEpoch;
+    const isStaleGeneration = () => (
+      capturedClearEpoch !== libraryClearEpoch ||
+      capturedGen !== getBookGeneration(bookId)
+    );
+
     return enqueueBookWrite(bookId, async () => {
+      if (isStaleGeneration()) {
+        return {
+          ok: true,
+          persistedToIdb: false,
+          persistedToMemory: false,
+          writtenToIdb: false,
+          skipped: true,
+          reason: "stale-instance-generation",
+          record: null
+        };
+      }
       if (deletedBookIdsInSession.has(bookId) && !options.allowCreate) {
         return {
           ok: true,
@@ -962,6 +1613,17 @@
 
       let conn = await ensureDb();
       if (!conn) {
+        if (isStaleGeneration()) {
+          return {
+            ok: true,
+            persistedToIdb: false,
+            persistedToMemory: false,
+            writtenToIdb: false,
+            skipped: true,
+            reason: "stale-instance-generation",
+            record: null
+          };
+        }
         // Fallback temporal en RAM (nunca confirma persistedToIdb)
         const list = inMemoryDb.books || [];
         const existingMem = list.find(x => x && x.id === bookId) || null;
@@ -1025,6 +1687,19 @@
           const getReq = store.get(bookId);
 
           getReq.onsuccess = () => {
+            if (isStaleGeneration()) {
+              didPut = false;
+              skipReason = "stale-instance-generation";
+              finalRecord = null;
+              return;
+            }
+            if (deletedBookIdsInSession.has(bookId) && !options.allowCreate) {
+              didPut = false;
+              skipReason = "deleted-in-session";
+              finalRecord = null;
+              return;
+            }
+
             const diskRecord = getReq.result || null;
             let decision;
             try {
@@ -1082,7 +1757,7 @@
               });
               return;
             }
-            if (finalRecord) {
+            if (finalRecord && !isStaleGeneration() && !(deletedBookIdsInSession.has(bookId) && !options.allowCreate)) {
               putInMemoryStore("books", finalRecord);
               syncBookCachesAfterCommit(finalRecord, options);
             }
@@ -1150,7 +1825,7 @@
       });
 
       let res = await runTx(conn);
-      if (!res.ok && res.retryableInvalidState) {
+      if (!res.ok && res.retryableInvalidState && !isStaleGeneration()) {
         resetRetryCooldown();
         conn = await ensureDb();
         if (conn) {
@@ -1219,68 +1894,217 @@
   }
 
   /**
-   * Actualización de progreso de lectura con guarda optimista multi-pestaña (progressRevision)
-   * y conservación de parches pendientes en pendingRecoveryProgressPatches si IDB no está disponible.
+   * Evalúa si un espejo pendiente es reconciliable de forma determinista contra un registro de disco.
+   */
+  function canAcceptPendingMirrorAgainstDisk(mirror, diskRecord) {
+    if (!diskRecord || !diskRecord.id) return { accept: false, reason: "missing-book" };
+    const norm = normalizeDiskProgressRecord(diskRecord);
+    if (!norm.valid) return { accept: false, reason: "invalid-disk-metadata" };
+    if (!norm.bookInstanceId || !mirror.bookInstanceId || norm.bookInstanceId !== mirror.bookInstanceId) {
+      return { accept: false, reason: "instance-id-mismatch" };
+    }
+
+    if (!mirror.baseRevisionKnown) {
+      if (
+        norm.rev > 0 ||
+        norm.sess !== null ||
+        norm.seq > 0 ||
+        norm.hasStartedReading ||
+        norm.currentChapter > 0 ||
+        norm.chapterScrollRatio > 0
+      ) {
+        return { accept: false, reason: "unverified-mirror-disk-not-virgin" };
+      }
+      return { accept: true, reason: null, norm };
+    }
+
+    if (
+      typeof mirror.baseDiskRevision !== "number" ||
+      !Number.isFinite(mirror.baseDiskRevision) ||
+      typeof mirror.baseDiskSeq !== "number" ||
+      !Number.isFinite(mirror.baseDiskSeq) ||
+      !(mirror.baseDiskSessionId === null || (typeof mirror.baseDiskSessionId === "string" && mirror.baseDiskSessionId.length > 0))
+    ) {
+      return { accept: false, reason: "invalid-mirror-base-metadata" };
+    }
+
+    if (norm.rev !== mirror.baseDiskRevision) {
+      return { accept: false, reason: "revision-mismatch" };
+    }
+
+    const matchesExactBase = (
+      norm.sess === mirror.baseDiskSessionId &&
+      norm.seq === mirror.baseDiskSeq
+    );
+    const matchesSameSessionAdvance = (
+      norm.sess === mirror.progressSessionId &&
+      norm.seq >= mirror.baseDiskSeq &&
+      norm.seq < mirror.progressSeq
+    );
+
+    if (matchesExactBase || matchesSameSessionAdvance) {
+      return { accept: true, reason: null, norm };
+    }
+    return { accept: false, reason: "cross-session-or-seq-conflict" };
+  }
+
+  /**
+   * Actualización de progreso de lectura con guarda optimista multi-pestaña (progressRevision),
+   * conservación de parches pendientes en pendingRecoveryProgressPatches si IDB no está disponible,
+   * y escritura síncrona previa del espejo en localStorage desde este único propietario.
    */
   async function saveBookProgressPatch(bookId, progressPatch, options = {}) {
     if (!bookId || !progressPatch || typeof progressPatch !== "object") {
       return { ok: false, persistedToIdb: false, persistedToMemory: false, writtenToIdb: false, skipped: false };
     }
 
+    if (deletedBookIdsInSession.has(bookId) && !options.allowCreate) {
+      return {
+        ok: true,
+        persistedToIdb: false,
+        persistedToMemory: false,
+        writtenToIdb: false,
+        skipped: true,
+        reason: "deleted-in-session",
+        record: null
+      };
+    }
+
+    const capturedGen = getBookGeneration(bookId);
+    const capturedClearEpoch = libraryClearEpoch;
+    const isRecoveryDrain = Boolean(options.isRecoveryDrain);
+    const fromMirrorReconcile = Boolean(options.fromMirrorReconcile);
+
+    const knownState = knownDiskStateByBook.get(bookId) || null;
     const baseRevisionKnown = options.baseRevisionKnown !== undefined
       ? Boolean(options.baseRevisionKnown)
-      : knownDiskRevisionByBook.has(bookId);
+      : Boolean(knownState && knownDiskRevisionByBook.has(bookId));
     const expectedBaseRevision = baseRevisionKnown
-      ? (options.expectedBaseRevision !== undefined ? options.expectedBaseRevision : knownDiskRevisionByBook.get(bookId))
+      ? (options.expectedBaseRevision !== undefined ? options.expectedBaseRevision : (knownState ? knownState.rev : knownDiskRevisionByBook.get(bookId)))
       : null;
+    const expectedBaseSessionId = baseRevisionKnown
+      ? (options.expectedBaseSessionId !== undefined ? options.expectedBaseSessionId : (knownState ? knownState.sess : null))
+      : undefined;
+    const expectedBaseSeq = baseRevisionKnown
+      ? (options.expectedBaseSeq !== undefined ? options.expectedBaseSeq : (knownState ? knownState.seq : 0))
+      : undefined;
 
-    const incomingSeq = typeof progressPatch.progressSeq === "number"
+    const incomingSeq = typeof progressPatch.progressSeq === "number" && Number.isFinite(progressPatch.progressSeq)
       ? progressPatch.progressSeq
       : nextBookProgressSeq(bookId);
-    const incomingTs = typeof progressPatch.progressUpdatedAt === "number"
+    const incomingTs = typeof progressPatch.progressUpdatedAt === "number" && Number.isFinite(progressPatch.progressUpdatedAt)
       ? progressPatch.progressUpdatedAt
       : nextMonotonicProgressTimestamp();
-    const isRecoveryDrain = Boolean(options.isRecoveryDrain);
+    const incomingSessionId = (typeof progressPatch.progressSessionId === "string" && progressPatch.progressSessionId)
+      ? progressPatch.progressSessionId
+      : STORAGE_SESSION_ID;
+
+    const resolvedInstanceId = (
+      (typeof options.expectedBookInstanceId === "string" && options.expectedBookInstanceId) ||
+      bookInstanceIdByBook.get(bookId) ||
+      (options.fallbackBook && typeof options.fallbackBook.bookInstanceId === "string" && options.fallbackBook.bookInstanceId) ||
+      null
+    );
 
     const preparedPatch = {
-      currentChapter: typeof progressPatch.currentChapter === "number" ? progressPatch.currentChapter : undefined,
-      chapterScrollRatio: typeof progressPatch.chapterScrollRatio === "number" ? progressPatch.chapterScrollRatio : undefined,
+      currentChapter: typeof progressPatch.currentChapter === "number" && Number.isFinite(progressPatch.currentChapter)
+        ? Math.max(0, progressPatch.currentChapter)
+        : undefined,
+      chapterScrollRatio: typeof progressPatch.chapterScrollRatio === "number" && Number.isFinite(progressPatch.chapterScrollRatio)
+        ? Math.max(0, Math.min(1, progressPatch.chapterScrollRatio))
+        : undefined,
       chapterAnchor: progressPatch.chapterAnchor !== undefined ? progressPatch.chapterAnchor : undefined,
       hasStartedReading: progressPatch.hasStartedReading !== undefined ? Boolean(progressPatch.hasStartedReading) : undefined,
       lastOpenedAt: typeof progressPatch.lastOpenedAt === "number" ? progressPatch.lastOpenedAt : undefined,
       progressSeq: incomingSeq,
-      progressSessionId: progressPatch.progressSessionId || STORAGE_SESSION_ID,
+      progressSessionId: incomingSessionId,
       progressUpdatedAt: incomingTs,
       expectedBaseRevision,
+      expectedBaseSessionId,
+      expectedBaseSeq,
+      expectedBookInstanceId: resolvedInstanceId,
       baseRevisionKnown,
       explicitUserChapterSwitch: Boolean(options.explicitUserChapterSwitch)
     };
+
+    // Escritura síncrona previa del espejo pendiente antes de cualquier await (para pagehide / freeze / beforeunload)
+    if (!options.skipPreMirrorWrite && !isRecoveryDrain && !fromMirrorReconcile) {
+      const refBook = options.fallbackBook || hooks.getCurrentBook() || null;
+      const existingMirror = readProgressMirror(bookId);
+      const mirrorChapter = preparedPatch.currentChapter !== undefined
+        ? preparedPatch.currentChapter
+        : (refBook && refBook.id === bookId && typeof refBook.currentChapter === "number" && Number.isFinite(refBook.currentChapter)
+          ? Math.max(0, refBook.currentChapter)
+          : (existingMirror && typeof existingMirror.currentChapter === "number" && Number.isFinite(existingMirror.currentChapter) ? existingMirror.currentChapter : 0));
+      const mirrorRatio = preparedPatch.chapterScrollRatio !== undefined
+        ? preparedPatch.chapterScrollRatio
+        : (refBook && refBook.id === bookId && typeof refBook.chapterScrollRatio === "number" && Number.isFinite(refBook.chapterScrollRatio)
+          ? Math.max(0, Math.min(1, refBook.chapterScrollRatio))
+          : (existingMirror && typeof existingMirror.chapterScrollRatio === "number" && Number.isFinite(existingMirror.chapterScrollRatio) ? existingMirror.chapterScrollRatio : 0));
+      const mirrorAnchor = preparedPatch.chapterAnchor !== undefined
+        ? preparedPatch.chapterAnchor
+        : (refBook && refBook.id === bookId ? (refBook.chapterAnchor || null) : (existingMirror ? existingMirror.chapterAnchor || null : null));
+      const mirrorStarted = preparedPatch.hasStartedReading !== undefined
+        ? preparedPatch.hasStartedReading
+        : Boolean((refBook && refBook.id === bookId && refBook.hasStartedReading) || mirrorChapter > 0 || mirrorRatio > 0);
+
+      if (mirrorStarted || mirrorChapter > 0 || mirrorRatio > 0) {
+        const preMirrorPayload = {
+          version: 1,
+          bookId,
+          bookInstanceId: resolvedInstanceId,
+          confirmedInIdb: false,
+          progressRevision: null,
+          progressSessionId: preparedPatch.progressSessionId,
+          progressSeq: preparedPatch.progressSeq,
+          baseRevisionKnown: preparedPatch.baseRevisionKnown,
+          baseDiskRevision: preparedPatch.baseRevisionKnown ? preparedPatch.expectedBaseRevision : null,
+          baseDiskSessionId: preparedPatch.baseRevisionKnown ? preparedPatch.expectedBaseSessionId : undefined,
+          baseDiskSeq: preparedPatch.baseRevisionKnown ? preparedPatch.expectedBaseSeq : null,
+          currentChapter: mirrorChapter,
+          chapterScrollRatio: mirrorRatio,
+          chapterAnchor: mirrorAnchor && typeof mirrorAnchor === "object" ? mirrorAnchor : null,
+          hasStartedReading: mirrorStarted
+        };
+        writeProgressMirror(bookId, preMirrorPayload);
+      }
+    }
 
     const res = await dbUpdateBookInTransaction(
       bookId,
       (diskRecord) => {
         if (!diskRecord) {
-          if (isRecoveryDrain || !options.fallbackBook) {
-            return { skip: true, reason: isRecoveryDrain ? "recovery-missing-book" : "missing-book" };
+          if (isRecoveryDrain || fromMirrorReconcile || !options.fallbackBook) {
+            return {
+              skip: true,
+              reason: fromMirrorReconcile
+                ? "mirror-reconcile-missing-book"
+                : (isRecoveryDrain ? "recovery-missing-book" : "missing-book")
+            };
           }
         }
 
         const base = diskRecord ? { ...diskRecord } : buildMetaRecord(options.fallbackBook);
-        const diskRev = typeof base.progressRevision === "number" && Number.isFinite(base.progressRevision)
-          ? base.progressRevision
-          : 0;
-        const diskSeq = typeof base.progressSeq === "number" && Number.isFinite(base.progressSeq)
-          ? base.progressSeq
-          : 0;
-        const diskSess = base.progressSessionId || null;
+        const norm = normalizeDiskProgressRecord(base);
+        const diskRev = norm.rev;
+        const diskSeq = norm.seq;
+        const diskSess = norm.sess;
 
-        if (isRecoveryDrain) {
+        if (fromMirrorReconcile) {
+          const check = canAcceptPendingMirrorAgainstDisk(options.mirrorDescriptor, base);
+          if (!check.accept) {
+            return { skip: true, reason: check.reason || "mirror-reconcile-rejected", record: base };
+          }
+        } else if (isRecoveryDrain) {
           if (!preparedPatch.baseRevisionKnown) {
             const hasDiskProgress = Boolean(
-              base.hasStartedReading ||
-              (base.currentChapter || 0) > 0 ||
-              (base.chapterScrollRatio || 0) > 0 ||
-              diskRev > 0
+              !norm.valid ||
+              norm.hasStartedReading ||
+              norm.currentChapter > 0 ||
+              norm.chapterScrollRatio > 0 ||
+              diskRev > 0 ||
+              diskSess !== null ||
+              diskSeq > 0
             );
             if (hasDiskProgress) {
               return { skip: true, reason: "recovery-disk-has-progress", record: base };
@@ -1315,6 +2139,10 @@
           base.lastOpenedAt = Math.max(base.lastOpenedAt || 0, preparedPatch.lastOpenedAt);
         }
 
+        if (!base.bookInstanceId) {
+          base.bookInstanceId = preparedPatch.expectedBookInstanceId || generateBookInstanceId();
+        }
+
         const nextRev = Math.max(diskRev, preparedPatch.expectedBaseRevision || 0) + 1;
         base.progressRevision = nextRev;
         base.progressSeq = preparedPatch.progressSeq;
@@ -1324,29 +2152,68 @@
         return { skip: false, record: base };
       },
       {
-        allowCreate: Boolean(options.fallbackBook && !isRecoveryDrain),
+        allowCreate: Boolean(options.fallbackBook && !isRecoveryDrain && !fromMirrorReconcile),
         forceSyncProgress: true,
-        isProgressWrite: true
+        isProgressWrite: true,
+        capturedGen,
+        capturedClearEpoch
       }
     );
 
-    if (res.skipped && res.reason === "external-revision-conflict" && res.record) {
-      syncBookCachesAfterCommit(res.record, { forceSyncProgress: true });
-      if (typeof hooks.onExternalProgressConflict === "function") {
-        try {
-          hooks.onExternalProgressConflict({
-            bookId,
-            diskRecord: res.record,
-            attemptedPatch: preparedPatch
-          });
-        } catch (e) {}
+    const stillSameInstance = (
+      capturedClearEpoch === libraryClearEpoch &&
+      capturedGen === getBookGeneration(bookId) &&
+      !(deletedBookIdsInSession.has(bookId) && !options.allowCreate)
+    );
+
+    if (stillSameInstance) {
+      if (res.persistedToIdb && res.record) {
+        const curMirror = readProgressMirror(bookId);
+        const hasNewerPendingInSameSession = Boolean(
+          curMirror &&
+          !curMirror.confirmedInIdb &&
+          curMirror.progressSessionId === STORAGE_SESSION_ID &&
+          typeof curMirror.progressSeq === "number" &&
+          curMirror.progressSeq > preparedPatch.progressSeq &&
+          (!res.record.bookInstanceId || !curMirror.bookInstanceId || curMirror.bookInstanceId === res.record.bookInstanceId)
+        );
+        if (!hasNewerPendingInSameSession) {
+          syncMirrorFromDiskRecord(res.record);
+        }
+      } else if (
+        res.skipped &&
+        (
+          res.reason === "external-revision-conflict" ||
+          res.reason === "recovery-disk-has-progress" ||
+          res.reason === "mirror-reconcile-rejected" ||
+          res.reason === "instance-id-mismatch" ||
+          res.reason === "revision-mismatch" ||
+          res.reason === "cross-session-or-seq-conflict" ||
+          res.reason === "unverified-mirror-disk-not-virgin" ||
+          res.reason === "invalid-disk-metadata" ||
+          res.reason === "invalid-mirror-base-metadata"
+        )
+      ) {
+        if (res.record) {
+          syncBookCachesAfterCommit(res.record, { forceSyncProgress: true });
+          syncMirrorFromDiskRecord(res.record);
+        }
+        if (res.reason === "external-revision-conflict" && res.record && typeof hooks.onExternalProgressConflict === "function") {
+          try {
+            hooks.onExternalProgressConflict({
+              bookId,
+              diskRecord: res.record,
+              attemptedPatch: preparedPatch
+            });
+          } catch (e) {}
+        }
+      } else if (res.skipped && res.reason === "mirror-reconcile-missing-book") {
+        removeProgressMirror(bookId);
       }
-    } else if (res.skipped && res.reason === "recovery-disk-has-progress" && res.record) {
-      syncBookCachesAfterCommit(res.record, { forceSyncProgress: true });
     }
 
     // Si falló IDB o cayó a RAM temporal (y no es ya un drenado conflictivo/descartado), conservar en pendingRecoveryProgressPatches
-    if (!res.persistedToIdb && !res.skipped && !isRecoveryDrain) {
+    if (!res.persistedToIdb && !res.skipped && !isRecoveryDrain && !fromMirrorReconcile && stillSameInstance) {
       const existingPending = pendingRecoveryProgressPatches.get(bookId);
       if (!existingPending || preparedPatch.progressSeq >= existingPending.progressSeq) {
         pendingRecoveryProgressPatches.set(bookId, preparedPatch);
@@ -1355,7 +2222,7 @@
       pendingRecoveryProgressPatches.delete(bookId);
     } else if (res.skipped && isRecoveryDrain) {
       pendingRecoveryProgressPatches.delete(bookId);
-    } else if (res.persistedToIdb && !isRecoveryDrain) {
+    } else if (res.persistedToIdb && !isRecoveryDrain && !fromMirrorReconcile) {
       const curPending = pendingRecoveryProgressPatches.get(bookId);
       if (curPending && curPending.progressSeq <= preparedPatch.progressSeq) {
         pendingRecoveryProgressPatches.delete(bookId);
@@ -1372,14 +2239,17 @@
     for (let i = 0; i < entries.length; i++) {
       const bookId = entries[i][0];
       const patch = entries[i][1];
-      if (!patch) {
+      if (!patch || deletedBookIdsInSession.has(bookId)) {
         pendingRecoveryProgressPatches.delete(bookId);
         continue;
       }
       const res = await saveBookProgressPatch(bookId, patch, {
         isRecoveryDrain: true,
         baseRevisionKnown: patch.baseRevisionKnown,
-        expectedBaseRevision: patch.expectedBaseRevision
+        expectedBaseRevision: patch.expectedBaseRevision,
+        expectedBaseSessionId: patch.expectedBaseSessionId,
+        expectedBaseSeq: patch.expectedBaseSeq,
+        expectedBookInstanceId: patch.expectedBookInstanceId
       });
       results.push({ bookId, res });
       if (typeof hooks.onRecoverySync === "function") {
@@ -1414,11 +2284,14 @@
     const expectedBase = knownDiskRevisionByBook.has(book.id) ? knownDiskRevisionByBook.get(book.id) : null;
     const seq = nextBookProgressSeq(book.id);
     const ts = nextMonotonicProgressTimestamp();
+    const capturedGen = getBookGeneration(book.id);
+    const capturedClearEpoch = libraryClearEpoch;
 
     const res = await dbUpdateBookInTransaction(
       book.id,
       (diskRecord) => {
         if (!diskRecord) {
+          fullRec.bookInstanceId = fullRec.bookInstanceId || generateBookInstanceId();
           fullRec.progressRevision = 1;
           fullRec.progressSeq = seq;
           fullRec.progressSessionId = STORAGE_SESSION_ID;
@@ -1426,8 +2299,15 @@
           return { skip: false, record: fullRec };
         }
 
-        const diskRev = typeof diskRecord.progressRevision === "number" ? diskRecord.progressRevision : 0;
+        const diskRev = typeof diskRecord.progressRevision === "number" && Number.isFinite(diskRecord.progressRevision)
+          ? diskRecord.progressRevision
+          : 0;
         const merged = { ...diskRecord, ...fullRec };
+        if (options.kind === "full") {
+          merged.bookInstanceId = fullRec.bookInstanceId || generateBookInstanceId();
+        } else {
+          merged.bookInstanceId = diskRecord.bookInstanceId || fullRec.bookInstanceId || generateBookInstanceId();
+        }
         if (fullRec.group === undefined) delete merged.group;
         if (fullRec.groups === undefined) delete merged.groups;
         if (fullRec.chapterWordCounts === undefined) {
@@ -1466,19 +2346,47 @@
       {
         allowCreate: true,
         forceSyncProgress: allowProgressOverwrite,
-        preserveNewerInMemoryProgress: !allowProgressOverwrite
+        preserveNewerInMemoryProgress: !allowProgressOverwrite,
+        capturedGen,
+        capturedClearEpoch
       }
     );
+
+    if (res.persistedToIdb && res.record) {
+      syncMirrorFromDiskRecord(res.record);
+    }
     return Boolean(res.ok);
   }
 
   async function saveFullBookToDb(bookData, assetBlobs = []) {
     if (!bookData || !bookData.id) return false;
-    deletedBookIdsInSession.delete(bookData.id);
-    const removeFromBooksList = (bookId) => {
+    const bookId = bookData.id;
+
+    // Barrera determinista para reimportaciones sobre el mismo bookId
+    const priorQueue = bookWriteQueues.get(bookId);
+    deletedBookIdsInSession.add(bookId);
+    bumpBookGeneration(bookId);
+    if (priorQueue) {
+      await priorQueue.catch(() => {});
+    }
+
+    // Si había una limpieza pendiente para este mismo bookId, ejecutarla/purgarla antes de escribir los nuevos recursos
+    await flushPendingAssetCleanupsForBookId(bookId);
+
+    pendingRecoveryProgressPatches.delete(bookId);
+    knownDiskRevisionByBook.delete(bookId);
+    knownDiskStateByBook.delete(bookId);
+    bookSeqCounters.delete(bookId);
+    bookInstanceIdByBook.delete(bookId);
+    removeProgressMirror(bookId);
+
+    // Toda importación completa crea una nueva identidad de instancia aunque reutilice bookId (p. ej. backup)
+    bookData.bookInstanceId = generateBookInstanceId();
+
+    const removeFromBooksList = (targetBookId) => {
       const list = hooks.getBooksList();
       if (Array.isArray(list)) {
-        hooks.setBooksList(list.filter(b => b && b.id !== bookId));
+        hooks.setBooksList(list.filter(b => b && b.id !== targetBookId));
       }
     };
 
@@ -1489,7 +2397,7 @@
         if (!asset || !asset.assetKey) continue;
         assetBatch.push({
           assetKey: asset.assetKey,
-          bookId: bookData.id,
+          bookId,
           buffer: asset.buffer || null,
           mimeType: asset.mimeType || "image/jpeg"
         });
@@ -1498,8 +2406,8 @@
       if (assetBatch.length > 0) {
         const assetsSaved = await dbSaveBatch("bookAssets", assetBatch, 16);
         if (!assetsSaved) {
-          await deleteBookAndAssets(bookData.id).catch(() => {});
-          removeFromBooksList(bookData.id);
+          await deleteBookAndAssets(bookId).catch(() => {});
+          removeFromBooksList(bookId);
           return false;
         }
       }
@@ -1513,12 +2421,12 @@
       for (let c = 0; c < chunkCount; c++) {
         const slice = chapters.slice(c * CHAPTER_CHUNK_SIZE, (c + 1) * CHAPTER_CHUNK_SIZE);
         contentBatch.push({
-          bookId: `${bookData.id}__chunk_${c}`,
+          bookId: `${bookId}__chunk_${c}`,
           chapters: slice
         });
       }
       contentBatch.push({
-        bookId: bookData.id,
+        bookId,
         chunkCount,
         chapters: [],
         footnotes: bookData.footnotes || {}
@@ -1526,7 +2434,7 @@
       contentSaved = await dbSaveBatch("bookContents", contentBatch, 10);
     } else {
       contentSaved = await dbSave("bookContents", {
-        bookId: bookData.id,
+        bookId,
         chunkCount: 0,
         chapters,
         footnotes: bookData.footnotes || {}
@@ -1534,15 +2442,16 @@
     }
 
     if (!contentSaved) {
-      await deleteBookAndAssets(bookData.id).catch(() => {});
-      removeFromBooksList(bookData.id);
+      await deleteBookAndAssets(bookId).catch(() => {});
+      removeFromBooksList(bookId);
       return false;
     }
 
+    deletedBookIdsInSession.delete(bookId);
     const metaSaved = await saveBookMeta(bookData, { allowProgressOverwrite: true, kind: "full" });
     if (!metaSaved) {
-      await deleteBookAndAssets(bookData.id).catch(() => {});
-      removeFromBooksList(bookData.id);
+      await deleteBookAndAssets(bookId).catch(() => {});
+      removeFromBooksList(bookId);
       return false;
     }
     return true;
@@ -1615,22 +2524,273 @@
     return book;
   }
 
+  async function loadMergedPendingAssetCleanups() {
+    let diskRec = null;
+    if (db) {
+      try {
+        diskRec = await dbGet("settings", PENDING_CLEANUPS_KEY);
+      } catch (e) {}
+    }
+    const diskMap = diskRec && diskRec.val && typeof diskRec.val === "object" ? diskRec.val : {};
+    const merged = cloneCleanupsMap({ ...diskMap, ...pendingAssetCleanupsRam });
+    pendingAssetCleanupsRam = merged;
+    return merged;
+  }
+
+  async function executeSingleCleanupJob(job) {
+    if (!job || !job.bookId) return { done: true, failedStores: [] };
+    const failedStores = [];
+
+    if (Array.isArray(job.contentKeys) && job.contentKeys.length > 0) {
+      const cRes = await dbDeleteBatch("bookContents", job.contentKeys, 40, { skipCleanupPrune: true });
+      if (cRes.persistedToIdb) {
+        job.contentKeys = [];
+      } else {
+        if (Array.isArray(cRes.failedKeys) && cRes.failedKeys.length > 0) {
+          job.contentKeys = cRes.failedKeys;
+        }
+        failedStores.push("bookContents");
+      }
+    }
+
+    if (Array.isArray(job.settingsKeys) && job.settingsKeys.length > 0) {
+      const sRes = await dbDeleteBatch("settings", job.settingsKeys, 40, { skipCleanupPrune: true });
+      if (sRes.persistedToIdb) {
+        job.settingsKeys = [];
+      } else {
+        if (Array.isArray(sRes.failedKeys) && sRes.failedKeys.length > 0) {
+          job.settingsKeys = sRes.failedKeys;
+        }
+        failedStores.push("settings");
+      }
+    }
+
+    if (Array.isArray(job.assetKeys) && job.assetKeys.length > 0) {
+      const aRes = await dbDeleteBatch("bookAssets", job.assetKeys, 40, { skipCleanupPrune: true });
+      if (aRes.persistedToIdb) {
+        job.assetKeys = [];
+      } else {
+        if (Array.isArray(aRes.failedKeys) && aRes.failedKeys.length > 0) {
+          job.assetKeys = aRes.failedKeys;
+        }
+        failedStores.push("bookAssets");
+      }
+    }
+
+    job.failedStores = failedStores;
+    return { done: !hasPendingCleanupKeys(job), failedStores };
+  }
+
+  async function flushPendingAssetCleanups(loadedBooks = null) {
+    if (!db) return { processed: 0, remaining: Object.keys(pendingAssetCleanupsRam).length };
+    const merged = await loadMergedPendingAssetCleanups();
+    const ids = Object.keys(merged);
+    if (ids.length === 0) return { processed: 0, remaining: 0 };
+
+    const books = Array.isArray(loadedBooks) ? loadedBooks : await dbGetAll("books");
+    const liveIds = new Set((books || []).filter(b => b && b.id).map(b => b.id));
+    let processed = 0;
+
+    for (let i = 0; i < ids.length; i++) {
+      const id = ids[i];
+      const job = merged[id];
+      if (!job || liveIds.has(id)) {
+        // Nunca borrar recursos de un bookId vivo actualmente en IndexedDB "books"
+        delete merged[id];
+        continue;
+      }
+      processed++;
+      const res = await executeSingleCleanupJob(job);
+      if (res.done) {
+        delete merged[id];
+      }
+    }
+
+    await persistPendingAssetCleanupsMap(merged);
+    return { processed, remaining: Object.keys(merged).length };
+  }
+
+  async function flushPendingAssetCleanupsForBookId(bookId) {
+    if (!bookId) return;
+    const merged = await loadMergedPendingAssetCleanups();
+    const job = merged[bookId];
+    if (!job) return;
+    if (db) {
+      await executeSingleCleanupJob(job);
+    }
+    delete merged[bookId];
+    await persistPendingAssetCleanupsMap(merged);
+  }
+
+  async function backfillMissingInstanceIds(booksListInput = null) {
+    const books = Array.isArray(booksListInput) ? booksListInput : await dbGetAll("books");
+    if (!Array.isArray(books) || books.length === 0) return [];
+    const updated = [];
+    for (let i = 0; i < books.length; i++) {
+      const b = books[i];
+      if (!b || !b.id) continue;
+      if (typeof b.bookInstanceId === "string" && b.bookInstanceId.length > 0) {
+        bookInstanceIdByBook.set(b.id, b.bookInstanceId);
+        continue;
+      }
+      const assignedId = generateBookInstanceId();
+      const res = await dbUpdateBookInTransaction(
+        b.id,
+        (diskRecord) => {
+          if (!diskRecord) return { skip: true, reason: "missing-book" };
+          if (typeof diskRecord.bookInstanceId === "string" && diskRecord.bookInstanceId.length > 0) {
+            return { skip: true, reason: "already-has-instance-id", record: diskRecord };
+          }
+          // Asignar únicamente bookInstanceId preservando exactamente progreso, revisión, sesión y secuencia
+          const patched = { ...diskRecord, bookInstanceId: assignedId };
+          return { skip: false, record: patched };
+        },
+        {
+          allowCreate: false,
+          forceSyncProgress: false,
+          preserveNewerInMemoryProgress: true
+        }
+      );
+      if ((res.persistedToIdb || res.skipped) && res.record && res.record.bookInstanceId) {
+        b.bookInstanceId = res.record.bookInstanceId;
+        bookInstanceIdByBook.set(b.id, res.record.bookInstanceId);
+        if (res.persistedToIdb) {
+          syncMirrorFromDiskRecord(res.record);
+        }
+        updated.push({ bookId: b.id, bookInstanceId: res.record.bookInstanceId, persistedToIdb: res.persistedToIdb });
+      }
+    }
+    return updated;
+  }
+
+  async function reconcileProgressMirrors(booksListInput = null) {
+    const mirrorIds = listMirrorBookIds();
+    if (mirrorIds.length === 0) return [];
+    const books = Array.isArray(booksListInput) ? booksListInput : await dbGetAll("books");
+    const booksMap = new Map();
+    if (Array.isArray(books)) {
+      for (let i = 0; i < books.length; i++) {
+        if (books[i] && books[i].id) booksMap.set(books[i].id, books[i]);
+      }
+    }
+
+    const results = [];
+    for (let i = 0; i < mirrorIds.length; i++) {
+      const bookId = mirrorIds[i];
+      const diskRecord = booksMap.get(bookId) || null;
+      if (!diskRecord || deletedBookIdsInSession.has(bookId)) {
+        removeProgressMirror(bookId);
+        results.push({ bookId, action: "removed-missing-book", applied: false });
+        continue;
+      }
+
+      const mirror = readProgressMirror(bookId);
+      if (!isValidMirrorStructure(mirror, bookId)) {
+        syncMirrorFromDiskRecord(diskRecord);
+        results.push({ bookId, action: "rejected-invalid-mirror", applied: false });
+        continue;
+      }
+
+      const norm = normalizeDiskProgressRecord(diskRecord);
+      if (!norm.valid || !norm.bookInstanceId || mirror.bookInstanceId !== norm.bookInstanceId) {
+        // Regla estricta Punto 1: sin igualdad estricta no vacía de bookInstanceId, jamás restaurar espejo
+        syncMirrorFromDiskRecord(diskRecord);
+        results.push({ bookId, action: "rejected-instance-mismatch", applied: false });
+        continue;
+      }
+
+      if (mirror.confirmedInIdb) {
+        // Espejo confirmado jamás se promueve a IndexedDB; cualquier discrepancia se corrige desde disco
+        const matchesDisk = (
+          mirror.progressRevision === norm.rev &&
+          mirror.progressSessionId === norm.sess &&
+          mirror.progressSeq === norm.seq
+        );
+        if (!matchesDisk) {
+          syncMirrorFromDiskRecord(diskRecord);
+          results.push({ bookId, action: "refreshed-confirmed-mismatch", applied: false });
+        } else {
+          results.push({ bookId, action: "confirmed-in-sync", applied: false });
+        }
+        continue;
+      }
+
+      // Espejo pendiente (confirmedInIdb === false)
+      const check = canAcceptPendingMirrorAgainstDisk(mirror, diskRecord);
+      if (!check.accept) {
+        syncMirrorFromDiskRecord(diskRecord);
+        results.push({ bookId, action: `rejected-${check.reason || "conflict"}`, applied: false });
+        continue;
+      }
+
+      const nextSeq = nextBookProgressSeq(bookId, Math.max(norm.seq, mirror.progressSeq));
+      const patchRes = await saveBookProgressPatch(
+        bookId,
+        {
+          currentChapter: mirror.currentChapter,
+          chapterScrollRatio: mirror.chapterScrollRatio,
+          chapterAnchor: mirror.chapterAnchor,
+          hasStartedReading: mirror.hasStartedReading,
+          progressSeq: nextSeq,
+          progressSessionId: STORAGE_SESSION_ID
+        },
+        {
+          fromMirrorReconcile: true,
+          mirrorDescriptor: mirror,
+          baseRevisionKnown: mirror.baseRevisionKnown,
+          expectedBaseRevision: mirror.baseRevisionKnown ? mirror.baseDiskRevision : null,
+          expectedBaseSessionId: mirror.baseRevisionKnown ? mirror.baseDiskSessionId : undefined,
+          expectedBaseSeq: mirror.baseRevisionKnown ? mirror.baseDiskSeq : undefined,
+          expectedBookInstanceId: norm.bookInstanceId
+        }
+      );
+
+      if (patchRes.persistedToIdb && patchRes.record) {
+        booksMap.set(bookId, patchRes.record);
+        results.push({ bookId, action: "reconciled-to-idb", applied: true, record: patchRes.record });
+      } else {
+        results.push({
+          bookId,
+          action: patchRes.skipped ? `rejected-${patchRes.reason || "tx-skip"}` : "deferred-reconcile",
+          applied: false
+        });
+      }
+    }
+
+    return results;
+  }
+
   async function deleteBookAndAssets(bookId) {
+    if (!bookId) {
+      return {
+        ok: false,
+        persistedToIdb: false,
+        persistedToMemory: false,
+        deletedBook: false,
+        deletedFromIdb: false,
+        deletedFromMemoryOnly: false,
+        partial: false,
+        pendingCleanupPersisted: false,
+        orphanedAssetsPossible: false,
+        failedStores: [],
+        error: new Error("Invalid bookId")
+      };
+    }
+
+    bumpBookGeneration(bookId);
     deletedBookIdsInSession.add(bookId);
-    pendingRecoveryProgressPatches.delete(bookId);
-    knownDiskRevisionByBook.delete(bookId);
-    bookSeqCounters.delete(bookId);
     const tail = bookWriteQueues.get(bookId);
     if (tail) {
       await tail.catch(() => {});
     }
-    revokeBookObjectUrls(`${bookId}::`);
-    if (typeof hooks.onRevokeCover === "function") {
-      try { hooks.onRevokeCover(bookId); } catch (e) {}
-    }
-    if (typeof hooks.onBeforeDeleteBook === "function") {
-      try { hooks.onBeforeDeleteBook(bookId); } catch (e) {}
-    }
+
+    const existingBookRec = await dbGet("books", bookId).catch(() => null);
+    const capturedInstanceId = (
+      (existingBookRec && typeof existingBookRec.bookInstanceId === "string" && existingBookRec.bookInstanceId) ||
+      bookInstanceIdByBook.get(bookId) ||
+      null
+    );
+
     const contentRec = await dbGet("bookContents", bookId);
     const contentKeysToDelete = [bookId];
     if (contentRec && contentRec.chunkCount > 0) {
@@ -1638,17 +2798,156 @@
         contentKeysToDelete.push(`${bookId}__chunk_${c}`);
       }
     }
-    await dbDeleteBatch("bookContents", contentKeysToDelete, 40);
-    await dbDelete("books", bookId);
-    await dbDelete("settings", `bookSearchHistory_${bookId}`);
+    const settingsKeysToDelete = [`bookSearchHistory_${bookId}`];
     const assetKeys = await dbGetAllKeys("bookAssets");
     const matchingAssetKeys = assetKeys.filter(key => String(key).startsWith(`${bookId}::`));
-    if (matchingAssetKeys.length > 0) {
-      await dbDeleteBatch("bookAssets", matchingAssetKeys, 40);
+
+    // Fase 1: Borrado autoritativo del registro canónico "books"
+    const bookDel = await dbDelete("books", bookId);
+    if (!bookDel.ok) {
+      deletedBookIdsInSession.delete(bookId);
+      return {
+        ok: false,
+        persistedToIdb: false,
+        persistedToMemory: false,
+        deletedBook: false,
+        deletedFromIdb: false,
+        deletedFromMemoryOnly: false,
+        partial: false,
+        pendingCleanupPersisted: false,
+        orphanedAssetsPossible: false,
+        failedStores: ["books"],
+        error: bookDel.error || new Error("Failed deleting book record from IndexedDB")
+      };
+    }
+
+    // Camino solo RAM (p. ej. !conn / IDB bloqueado): nunca informar borrado confirmado en disco ni borrar espejo
+    if (!bookDel.persistedToIdb && bookDel.persistedToMemory) {
+      revokeBookObjectUrls(`${bookId}::`);
+      if (typeof hooks.onRevokeCover === "function") {
+        try { hooks.onRevokeCover(bookId); } catch (e) {}
+      }
+      if (typeof hooks.onBeforeDeleteBook === "function") {
+        try { hooks.onBeforeDeleteBook(bookId); } catch (e) {}
+      }
+      if (lastHydratedBookId === bookId) {
+        lastHydratedBookId = null;
+      }
+      await dbDeleteBatch("bookContents", contentKeysToDelete, 40, { skipCleanupPrune: true });
+      await dbDelete("settings", settingsKeysToDelete[0], { skipCleanupPrune: true });
+      if (matchingAssetKeys.length > 0) {
+        await dbDeleteBatch("bookAssets", matchingAssetKeys, 40, { skipCleanupPrune: true });
+      }
+      return {
+        ok: false,
+        persistedToIdb: false,
+        persistedToMemory: true,
+        deletedBook: false,
+        deletedFromIdb: false,
+        deletedFromMemoryOnly: true,
+        partial: false,
+        pendingCleanupPersisted: false,
+        orphanedAssetsPossible: false,
+        failedStores: [],
+        error: null
+      };
+    }
+
+    // Confirmado borrado en IndexedDB ("books" tx.oncomplete): limpiar espejo y estado de progreso de inmediato
+    removeProgressMirror(bookId);
+    pendingRecoveryProgressPatches.delete(bookId);
+    knownDiskRevisionByBook.delete(bookId);
+    knownDiskStateByBook.delete(bookId);
+    bookSeqCounters.delete(bookId);
+    bookInstanceIdByBook.delete(bookId);
+
+    revokeBookObjectUrls(`${bookId}::`);
+    if (typeof hooks.onRevokeCover === "function") {
+      try { hooks.onRevokeCover(bookId); } catch (e) {}
+    }
+    if (typeof hooks.onBeforeDeleteBook === "function") {
+      try { hooks.onBeforeDeleteBook(bookId); } catch (e) {}
     }
     if (lastHydratedBookId === bookId) {
       lastHydratedBookId = null;
     }
+
+    // Fase 2: Limpieza de recursos asociados con verificación estricta de persistedToIdb
+    const failedStores = [];
+    let firstError = null;
+    let remainingContentKeys = [];
+    let remainingSettingsKeys = [];
+    let remainingAssetKeys = [];
+
+    const contentsDel = await dbDeleteBatch("bookContents", contentKeysToDelete, 40, { skipCleanupPrune: true });
+    if (!contentsDel.ok || !contentsDel.persistedToIdb) {
+      failedStores.push("bookContents");
+      if (!firstError && contentsDel.error) firstError = contentsDel.error;
+      remainingContentKeys = (Array.isArray(contentsDel.failedKeys) && contentsDel.failedKeys.length > 0)
+        ? contentsDel.failedKeys
+        : contentKeysToDelete.slice();
+    }
+
+    const searchDel = await dbDelete("settings", settingsKeysToDelete[0], { skipCleanupPrune: true });
+    if (!searchDel.ok || !searchDel.persistedToIdb) {
+      failedStores.push("settings");
+      if (!firstError && searchDel.error) firstError = searchDel.error;
+      remainingSettingsKeys = settingsKeysToDelete.slice();
+    }
+
+    if (matchingAssetKeys.length > 0) {
+      const assetsDel = await dbDeleteBatch("bookAssets", matchingAssetKeys, 40, { skipCleanupPrune: true });
+      if (!assetsDel.ok || !assetsDel.persistedToIdb) {
+        failedStores.push("bookAssets");
+        if (!firstError && assetsDel.error) firstError = assetsDel.error;
+        remainingAssetKeys = (Array.isArray(assetsDel.failedKeys) && assetsDel.failedKeys.length > 0)
+          ? assetsDel.failedKeys
+          : matchingAssetKeys.slice();
+      }
+    }
+
+    if (failedStores.length === 0) {
+      return {
+        ok: true,
+        persistedToIdb: true,
+        persistedToMemory: false,
+        deletedBook: true,
+        deletedFromIdb: true,
+        deletedFromMemoryOnly: false,
+        partial: false,
+        pendingCleanupPersisted: false,
+        orphanedAssetsPossible: false,
+        failedStores: [],
+        error: null
+      };
+    }
+
+    const mergedCleanups = await loadMergedPendingAssetCleanups();
+    mergedCleanups[bookId] = {
+      bookId,
+      bookInstanceId: capturedInstanceId,
+      contentKeys: remainingContentKeys,
+      assetKeys: remainingAssetKeys,
+      settingsKeys: remainingSettingsKeys,
+      failedStores: failedStores.slice(),
+      failedAt: Date.now()
+    };
+    const cleanupPersistRes = await persistPendingAssetCleanupsMap(mergedCleanups);
+    const pendingCleanupPersisted = Boolean(cleanupPersistRes.ok && cleanupPersistRes.persistedToIdb === true);
+
+    return {
+      ok: false,
+      persistedToIdb: false,
+      persistedToMemory: false,
+      deletedBook: true,
+      deletedFromIdb: true,
+      deletedFromMemoryOnly: false,
+      partial: true,
+      pendingCleanupPersisted,
+      orphanedAssetsPossible: !pendingCleanupPersisted,
+      failedStores,
+      error: firstError || cleanupPersistRes.error || null
+    };
   }
 
   // Domain repositories over existing IndexedDB stores
@@ -1703,8 +3002,12 @@
       hasDatabase,
       getSessionId,
       getKnownDiskRevision: (bookId) => (knownDiskRevisionByBook.has(bookId) ? knownDiskRevisionByBook.get(bookId) : null),
+      getKnownDiskState: (bookId) => (knownDiskStateByBook.has(bookId) ? { ...knownDiskStateByBook.get(bookId) } : null),
+      getBookInstanceId: (bookId) => (bookInstanceIdByBook.has(bookId) ? bookInstanceIdByBook.get(bookId) : null),
       getPendingRecoveryPatchesCount: () => pendingRecoveryProgressPatches.size,
       hasPendingRecoveryPatch: (bookId) => pendingRecoveryProgressPatches.has(bookId),
+      readProgressMirror,
+      getPendingAssetCleanupsRamCount: () => Object.keys(pendingAssetCleanupsRam).length,
       drainPendingRecoveryProgressPatches,
       dbUpdateBookInTransaction,
       requestPersistentStorage,
@@ -1729,6 +3032,9 @@
       releaseLastHydratedBook,
       resetHydrationState,
       deleteWithAssets: deleteBookAndAssets,
+      reconcileProgressMirrors,
+      backfillMissingInstanceIds,
+      flushPendingAssetCleanups,
       clearAll: () => dbClear("books"),
       clearContents: () => dbClear("bookContents"),
       getCollections: getBookCollections,

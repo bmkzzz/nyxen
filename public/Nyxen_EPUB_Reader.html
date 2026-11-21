@@ -5930,7 +5930,7 @@ https://github.com/nodeca/pako/blob/main/LICENSE
           const openRes = await saveBookProgressPatch(
             currentBook.id,
             { hasStartedReading: true, lastOpenedAt: currentBook.lastOpenedAt },
-            { fallbackBook: currentBook }
+            { fallbackBook: currentBook, skipPreMirrorWrite: true }
           );
           if (openRes && openRes.reason === "external-revision-conflict" && typeof externalProgressConflictState !== "undefined") {
             // El registro canónico externo acaba de sincronizarse en currentBook antes de renderizar
@@ -6169,6 +6169,18 @@ https://github.com/nodeca/pako/blob/main/LICENSE
 
     safeOn("btnConfirmClear", "click", async () => {
       document.getElementById("clearConfirmModal")?.classList.add("hidden");
+      const booksClearRes = await dbClear("books");
+      if (!booksClearRes || !booksClearRes.ok) {
+        showToast(
+          currentLang === "es"
+            ? "No se pudo vaciar la biblioteca en IndexedDB"
+            : "Could not clear library in IndexedDB",
+          4200
+        );
+        await renderLibrary();
+        return;
+      }
+
       revokeBookObjectUrls();
       if (typeof revokeCoverObjectUrl === "function") revokeCoverObjectUrl();
       if (typeof librarySearchIndexCache !== "undefined") librarySearchIndexCache.clear();
@@ -6183,14 +6195,16 @@ https://github.com/nodeca/pako/blob/main/LICENSE
       window.NyxenStorage.books.resetHydrationState();
       const rc = document.getElementById("readerContent");
       if (rc) rc.innerHTML = "";
-      await dbClear("books");
-      await dbClear("bookContents");
-      await dbClear("bookAssets");
+
+      const contentsClearRes = await dbClear("bookContents");
+      const assetsClearRes = await dbClear("bookAssets");
       const settingKeys = await dbGetAllKeys("settings");
       const historyKeys = settingKeys.filter(sKey => String(sKey).startsWith("bookSearchHistory_"));
+      let historyDeleteRes = { ok: true, persistedToIdb: Boolean(booksClearRes.persistedToIdb) };
       if (historyKeys.length > 0) {
-        await dbDeleteBatch("settings", historyKeys, 40);
+        historyDeleteRes = await dbDeleteBatch("settings", historyKeys, 40);
       }
+
       if (typeof bookSearchHistoryCache !== "undefined") bookSearchHistoryCache.clear();
       if (typeof resetDrawerSearchState === "function") resetDrawerSearchState({ clearInput: true });
       if (typeof lastAutoRecordedSearch !== "undefined") {
@@ -6200,8 +6214,25 @@ https://github.com/nodeca/pako/blob/main/LICENSE
       currentBook = null;
       activeQuoteCardState.book = null;
       activeQuoteCardState.highlight = null;
-      await renderLibrary();
-      showToast(currentLang === "es" ? "Biblioteca vaciada" : "Library cleared");
+      await renderLibrary({ skipDbFetch: true });
+
+      if (!booksClearRes.persistedToIdb && booksClearRes.persistedToMemory) {
+        showToast(
+          currentLang === "es"
+            ? "Biblioteca vaciada solo en memoria temporal (IndexedDB no disponible)"
+            : "Library cleared in temporary RAM only (IndexedDB unavailable)",
+          4500
+        );
+      } else if (!contentsClearRes?.persistedToIdb || !assetsClearRes?.persistedToIdb || !historyDeleteRes?.ok) {
+        showToast(
+          currentLang === "es"
+            ? "Biblioteca vaciada, pero algunos recursos asociados no pudieron limpiarse"
+            : "Library cleared, but some associated assets could not be purged",
+          4500
+        );
+      } else {
+        showToast(currentLang === "es" ? "Biblioteca vaciada" : "Library cleared");
+      }
     });
 
     /* -------------------------------------------------------------
@@ -6296,7 +6327,7 @@ https://github.com/nodeca/pako/blob/main/LICENSE
           backupType: includeBooks ? "full" : "reading",
           exportedAt: new Date().toISOString(),
           booksMeta: allBooks.map(buildBookMetaBackupEntry),
-          settings: allSettings,
+          settings: allSettings.filter(s => s && s.key !== "pendingAssetCleanups"),
           themes: allThemesDb,
           swatches: allSwatchesDb
         };
@@ -6840,7 +6871,7 @@ https://github.com/nodeca/pako/blob/main/LICENSE
 
         if (Array.isArray(data.settings)) {
           for (const s of data.settings) {
-            if (!s || typeof s.key !== "string" || s.key === "seededSample" || s.key === "openLastBookV2" || s.key === "lastOpenedBookId") continue;
+            if (!s || typeof s.key !== "string" || s.key === "seededSample" || s.key === "openLastBookV2" || s.key === "lastOpenedBookId" || s.key === "pendingAssetCleanups") continue;
             await dbSave("settings", s);
             if (s.key === "language" && (s.val === "es" || s.val === "en")) applyLanguage(s.val);
             if (s.key === "readerConfig" && s.val && typeof s.val === "object") {
@@ -8229,12 +8260,48 @@ https://github.com/nodeca/pako/blob/main/LICENSE
     safeOn("btnConfirmDeleteSingle", "click", async () => {
       if (!targetContextBook) return;
       const bookId = targetContextBook.id;
-      await deleteBookAndAssets(bookId);
-      booksList = booksList.filter(b => b.id !== bookId);
-      if (currentBook && currentBook.id === bookId) currentBook = null;
+      const delRes = await deleteBookAndAssets(bookId);
       document.getElementById("deleteSingleBookModal")?.classList.add("hidden");
-      await renderLibrary();
-      showToast(currentLang === "es" ? "Libro eliminado de la biblioteca" : "Book deleted from library");
+
+      if (delRes && delRes.deletedFromIdb) {
+        booksList = booksList.filter(b => b.id !== bookId);
+        if (currentBook && currentBook.id === bookId) currentBook = null;
+        await renderLibrary();
+        if (!delRes.partial) {
+          showToast(currentLang === "es" ? "Libro eliminado de la biblioteca" : "Book deleted from library");
+        } else if (delRes.pendingCleanupPersisted) {
+          showToast(
+            currentLang === "es"
+              ? "Libro eliminado. Limpieza de archivos pendiente registrada para el próximo inicio"
+              : "Book deleted. Asset cleanup queued for next launch",
+            4400
+          );
+        } else {
+          showToast(
+            currentLang === "es"
+              ? "Libro eliminado de la biblioteca, pero quedaron archivos residuales sin poder registrar limpieza pendiente"
+              : "Book deleted from library, but residual files could not be removed or queued",
+            4800
+          );
+        }
+      } else if (delRes && delRes.deletedFromMemoryOnly) {
+        booksList = booksList.filter(b => b.id !== bookId);
+        if (currentBook && currentBook.id === bookId) currentBook = null;
+        await renderLibrary();
+        showToast(
+          currentLang === "es"
+            ? "Eliminado solo en memoria temporal (IndexedDB no disponible); podría reaparecer al recargar"
+            : "Removed in temporary RAM only (IndexedDB unavailable); may reappear on reload",
+          4800
+        );
+      } else {
+        showToast(
+          currentLang === "es"
+            ? "No se pudo eliminar el libro de IndexedDB"
+            : "Could not delete book from IndexedDB",
+          4200
+        );
+      }
       targetContextBook = null;
     });
 
@@ -14350,9 +14417,17 @@ https://github.com/nodeca/pako/blob/main/LICENSE
       if (offlinePackDownloading[lang]) return;
       const isInstalled = Boolean(offlineDictPacksMeta && offlineDictPacksMeta[lang]);
       if (isInstalled) {
+        const delRes = await dbDelete("dictPacks", lang);
+        if (delRes && delRes.ok === false) {
+          showToast(
+            currentLang === "es"
+              ? `No se pudo eliminar el diccionario (${lang.toUpperCase()})`
+              : `Could not remove dictionary (${lang.toUpperCase()})`
+          );
+          return;
+        }
         offlinePackMem[lang] = null;
         offlineDictPacksMeta[lang] = null;
-        await dbDelete("dictPacks", lang);
         await dbSave("settings", { key: "offlineDictPacksMeta", val: offlineDictPacksMeta });
         syncOfflineDictSettingsUI();
         showToast(currentLang === "es" ? `Diccionario offline (${lang.toUpperCase()}) eliminado` : `Offline dictionary (${lang.toUpperCase()}) removed`);
@@ -17027,7 +17102,12 @@ https://github.com/nodeca/pako/blob/main/LICENSE
       const removed = allThemes[idx];
       allThemes.splice(idx, 1);
 
-      await dbDelete("themes", themeId);
+      const delRes = await dbDelete("themes", themeId);
+      if (delRes && delRes.ok === false) {
+        allThemes.splice(idx, 0, removed);
+        showToast(currentLang === "es" ? "No se pudo eliminar el tema" : "Could not delete theme");
+        return false;
+      }
       if (DEFAULT_READER_THEMES.some(dt => dt.id === themeId) && !deletedDefaultThemeIds.includes(themeId)) {
         deletedDefaultThemeIds.push(themeId);
         await dbSave("settings", { key: "deletedDefaultThemeIds", val: deletedDefaultThemeIds });
@@ -18020,7 +18100,20 @@ https://github.com/nodeca/pako/blob/main/LICENSE
         applyAppStyles({ skipLanguage: true });
         await loadCustomFonts(prefetchedFonts);
 
-        booksList = loadedBooks || [];
+        let initialBooks = loadedBooks || [];
+        if (window.NyxenStorage && window.NyxenStorage.books) {
+          if (window.NyxenStorage.raw && window.NyxenStorage.raw.hasDatabase()) {
+            await window.NyxenStorage.books.flushPendingAssetCleanups(initialBooks);
+          }
+          const reconcileResults = await window.NyxenStorage.books.reconcileProgressMirrors(initialBooks);
+          if (Array.isArray(reconcileResults) && reconcileResults.some(r => r && r.applied && r.record)) {
+            const byId = new Map(reconcileResults.filter(r => r && r.applied && r.record).map(r => [r.bookId, r.record]));
+            initialBooks = initialBooks.map(b => (b && byId.has(b.id) ? byId.get(b.id) : b));
+          }
+          await window.NyxenStorage.books.backfillMissingInstanceIds(initialBooks);
+        }
+
+        booksList = initialBooks;
 
         // Migrar libros heredados (v9) que aún tengan 'chapters' incrustados en el store 'books'
         for (const b of booksList) {
