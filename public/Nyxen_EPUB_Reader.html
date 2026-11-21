@@ -5674,6 +5674,16 @@ https://github.com/nodeca/pako/blob/main/LICENSE
       onStatusChange: () => {
         updateTempStorageWarningBanner();
       },
+      onExternalProgressConflict: ({ bookId, diskRecord, attemptedPatch }) => {
+        if (typeof handleExternalProgressConflict === "function") {
+          handleExternalProgressConflict({ bookId, diskRecord, attemptedPatch });
+        }
+      },
+      onRecoverySync: ({ bookId, res }) => {
+        if (typeof handleStorageRecoverySync === "function") {
+          handleStorageRecoverySync({ bookId, res });
+        }
+      },
       getBooksList: () => (typeof booksList !== "undefined" ? booksList : []),
       setBooksList: (next) => {
         if (typeof booksList !== "undefined") booksList = Array.isArray(next) ? next : [];
@@ -5686,11 +5696,21 @@ https://github.com/nodeca/pako/blob/main/LICENSE
         if (typeof librarySearchIndexCache !== "undefined") librarySearchIndexCache.delete(bookId);
         if (typeof booksById !== "undefined") booksById.delete(bookId);
         if (typeof bookSearchHistoryCache !== "undefined") bookSearchHistoryCache.delete(bookId);
+        if (typeof lastSavedProgressState !== "undefined" && lastSavedProgressState.bookId === bookId) {
+          lastSavedProgressState = createEmptySavedProgressState();
+        }
+        if (typeof externalProgressConflictState !== "undefined" && externalProgressConflictState && externalProgressConflictState.bookId === bookId) {
+          externalProgressConflictState = null;
+        }
+        if (typeof activeRenderedChapterState !== "undefined" && activeRenderedChapterState.bookId === bookId) {
+          activeRenderedChapterState = { bookId: null, chapterIdx: -1 };
+        }
       }
     });
 
     const openDatabase = window.NyxenStorage.raw.openDatabase;
     const ensureDb = window.NyxenStorage.raw.ensureDb;
+    const resetDbRetryCooldown = window.NyxenStorage.raw.resetRetryCooldown;
     const isUsingTempMemoryStorage = window.NyxenStorage.raw.isUsingTempMemoryStorage;
     const requestPersistentStorage = window.NyxenStorage.raw.requestPersistentStorage;
     const dbSave = window.NyxenStorage.raw.dbSave;
@@ -5711,6 +5731,8 @@ https://github.com/nodeca/pako/blob/main/LICENSE
     const setBookCollections = window.NyxenStorage.books.setCollections;
     const getAllLibraryCollections = window.NyxenStorage.books.getAllCollections;
     const saveBookMeta = window.NyxenStorage.books.saveMeta;
+    const saveBookPatch = window.NyxenStorage.books.savePatch;
+    const saveBookProgressPatch = window.NyxenStorage.books.saveProgressPatch;
     const saveFullBookToDb = window.NyxenStorage.books.saveFull;
     const releaseBookHeavyMemory = window.NyxenStorage.books.releaseHeavyMemory;
     const ensureBookHydrated = window.NyxenStorage.books.ensureHydrated;
@@ -5874,6 +5896,9 @@ https://github.com/nodeca/pako/blob/main/LICENSE
         window.NyxenStorage.books.releaseLastHydratedBook();
         const readerContentNode = document.getElementById("readerContent");
         if (readerContentNode) readerContentNode.innerHTML = "";
+        if (typeof activeRenderedChapterState !== "undefined") {
+          activeRenderedChapterState = { bookId: null, chapterIdx: -1 };
+        }
         document.getElementById("viewLibrary")?.classList.remove("hidden");
         syncBrowserThemeColor(appConfig.bg);
         await renderLibrary({ skipDbFetch: Boolean(readerOptions.skipDbFetch) });
@@ -5885,7 +5910,7 @@ https://github.com/nodeca/pako/blob/main/LICENSE
         if (currentBook) {
           await ensureBookHydrated(currentBook);
           currentBook.lastOpenedAt = Date.now();
-          await saveBookMeta(currentBook);
+          await saveBookPatch(currentBook.id, { lastOpenedAt: currentBook.lastOpenedAt }, { fallbackBook: currentBook });
         }
         document.getElementById("viewStoryDetail")?.classList.remove("hidden");
         renderStoryDetail({ resetTab: true });
@@ -5902,7 +5927,15 @@ https://github.com/nodeca/pako/blob/main/LICENSE
           }
           currentBook.hasStartedReading = true;
           currentBook.lastOpenedAt = Date.now();
-          await saveBookMeta(currentBook);
+          const openRes = await saveBookProgressPatch(
+            currentBook.id,
+            { hasStartedReading: true, lastOpenedAt: currentBook.lastOpenedAt },
+            { fallbackBook: currentBook }
+          );
+          if (openRes && openRes.reason === "external-revision-conflict" && typeof externalProgressConflictState !== "undefined") {
+            // El registro canónico externo acaba de sincronizarse en currentBook antes de renderizar
+            externalProgressConflictState = null;
+          }
         } else {
           await showView("library");
           return;
@@ -6140,8 +6173,12 @@ https://github.com/nodeca/pako/blob/main/LICENSE
       if (typeof revokeCoverObjectUrl === "function") revokeCoverObjectUrl();
       if (typeof librarySearchIndexCache !== "undefined") librarySearchIndexCache.clear();
       if (typeof booksById !== "undefined") booksById.clear();
+      if (typeof clearProgressTimers === "function") clearProgressTimers();
       if (typeof lastSavedProgressState !== "undefined") {
-        lastSavedProgressState = { bookId: null, chapter: -1, ratio: -1 };
+        lastSavedProgressState = createEmptySavedProgressState();
+      }
+      if (typeof externalProgressConflictState !== "undefined") {
+        externalProgressConflictState = null;
       }
       window.NyxenStorage.books.resetHydrationState();
       const rc = document.getElementById("readerContent");
@@ -6990,7 +7027,7 @@ https://github.com/nodeca/pako/blob/main/LICENSE
             ]);
             target.favoriteChapters = Array.from(favSet);
 
-            await saveBookMeta(target);
+            await saveBookMeta(target, { allowProgressOverwrite: true, kind: "backup_merge" });
             matchedCount++;
           } else {
             unmatchedCount++;
@@ -7946,7 +7983,7 @@ https://github.com/nodeca/pako/blob/main/LICENSE
           e.stopPropagation();
           const newStatus = btn.dataset.status;
           targetContextBook.status = newStatus;
-          await saveBookMeta(targetContextBook);
+          await saveBookPatch(targetContextBook.id, { status: newStatus }, { fallbackBook: targetContextBook });
           updateStatusUI(newStatus);
           toggleStatusDropdown(false);
           await renderLibrary();
@@ -8078,7 +8115,11 @@ https://github.com/nodeca/pako/blob/main/LICENSE
             ? cur.filter(c => c.toLowerCase() !== grpKey)
             : [...cur, grp];
           setBookCollections(targetContextBook, next);
-          await saveBookMeta(targetContextBook);
+          await saveBookPatch(
+            targetContextBook.id,
+            { group: targetContextBook.group, groups: targetContextBook.groups },
+            { fallbackBook: targetContextBook }
+          );
           renderGroupModalChips();
           await renderLibrary({ skipDbFetch: true });
           showToast(
@@ -8119,7 +8160,11 @@ https://github.com/nodeca/pako/blob/main/LICENSE
       const alreadyIn = cur.some(c => c.toLowerCase() === grpName.toLowerCase());
       if (!alreadyIn) {
         setBookCollections(targetContextBook, [...cur, grpName]);
-        await saveBookMeta(targetContextBook);
+        await saveBookPatch(
+          targetContextBook.id,
+          { group: targetContextBook.group, groups: targetContextBook.groups },
+          { fallbackBook: targetContextBook }
+        );
       }
       if (!modalKnownGroups.some(g => g.toLowerCase() === grpName.toLowerCase())) {
         modalKnownGroups.push(grpName);
@@ -8151,7 +8196,11 @@ https://github.com/nodeca/pako/blob/main/LICENSE
     safeOn("btnRemoveFromGroup", "click", async () => {
       if (!targetContextBook) return;
       setBookCollections(targetContextBook, []);
-      await saveBookMeta(targetContextBook);
+      await saveBookPatch(
+        targetContextBook.id,
+        { group: undefined, groups: undefined },
+        { fallbackBook: targetContextBook }
+      );
       renderGroupModalChips();
       await renderLibrary({ skipDbFetch: true });
       showToast(currentLang === "es" ? "Libro quitado de todas las colecciones" : "Book removed from all collections");
@@ -8217,7 +8266,11 @@ https://github.com/nodeca/pako/blob/main/LICENSE
 
       currentBook.review = nextText;
       currentBook.reviewedAt = nextText ? Date.now() : 0;
-      await saveBookMeta(currentBook);
+      await saveBookPatch(
+        currentBook.id,
+        { review: currentBook.review, reviewedAt: currentBook.reviewedAt },
+        { fallbackBook: currentBook }
+      );
       updateDetailReviewDateUI();
 
       if (showSavedBadge) {
@@ -8428,7 +8481,7 @@ https://github.com/nodeca/pako/blob/main/LICENSE
           if (!isSlidingStars || !currentBook) return;
           isSlidingStars = false;
           if (lastPendingRating !== null) {
-            await saveBookMeta(currentBook);
+            await saveBookPatch(currentBook.id, { rating: currentBook.rating }, { fallbackBook: currentBook });
           }
           lastPendingRating = null;
         };
@@ -8440,7 +8493,7 @@ https://github.com/nodeca/pako/blob/main/LICENSE
         if (!currentBook) return;
         currentBook.rating = 0;
         syncDetailRatingAndReviewUI();
-        await saveBookMeta(currentBook);
+        await saveBookPatch(currentBook.id, { rating: 0 }, { fallbackBook: currentBook });
       });
 
       safeOn("btnDetailRatingQuickJump", "click", () => {
@@ -8594,10 +8647,11 @@ https://github.com/nodeca/pako/blob/main/LICENSE
           }
 
           row.addEventListener("click", async () => {
-            currentBook.currentChapter = idx;
-            currentBook.chapterScrollRatio = 0;
-            currentBook.hasStartedReading = true;
-            await saveBookMeta(currentBook);
+            await navigateToReaderChapter(idx, {
+              resetScroll: true,
+              skipOutgoingFlush: true,
+              deferRender: true
+            });
             showView("reader", { resetScroll: true });
           });
           partsFrag.appendChild(row);
@@ -8668,7 +8722,17 @@ https://github.com/nodeca/pako/blob/main/LICENSE
         if (typeof revokeCoverObjectUrl === "function") revokeCoverObjectUrl(currentBook.id);
       }
 
-      await saveBookMeta(currentBook);
+      await saveBookPatch(
+        currentBook.id,
+        {
+          title: currentBook.title,
+          author: currentBook.author,
+          description: currentBook.description,
+          tags: currentBook.tags,
+          cover: currentBook.cover
+        },
+        { fallbackBook: currentBook }
+      );
       document.getElementById("editMetadataModal")?.classList.add("hidden");
       renderStoryDetail();
     });
@@ -10669,7 +10733,23 @@ https://github.com/nodeca/pako/blob/main/LICENSE
           if (ch && typeof ch === "object") cleanedChapterCache.delete(ch);
         });
       }
-      await saveBookMeta(currentBook);
+      await saveBookPatch(
+        currentBook.id,
+        { allowExternalResources: true },
+        { fallbackBook: currentBook }
+      );
+      if (best.anchor || best.ratio > 0) {
+        await saveBookProgressPatch(
+          currentBook.id,
+          {
+            currentChapter: currentBook.currentChapter || 0,
+            chapterScrollRatio: best.ratio,
+            chapterAnchor: best.anchor || null,
+            hasStartedReading: true
+          },
+          { fallbackBook: currentBook }
+        );
+      }
       updateReaderExternalMediaBar(0);
       await renderReader();
       showToast(currentLang === "es" ? "Imágenes externas habilitadas para este libro" : "External images enabled for this book");
@@ -10757,6 +10837,9 @@ https://github.com/nodeca/pako/blob/main/LICENSE
       const content = document.getElementById("readerContent");
       if (content) {
         content.innerHTML = staticTitleHtml + cleanedBodyHtml;
+        if (typeof activeRenderedChapterState !== "undefined") {
+          activeRenderedChapterState = { bookId: currentBook.id, chapterIdx };
+        }
         await hydrateChapterImages(content);
         if (myRenderToken !== readerRenderToken) return;
       }
@@ -10777,6 +10860,9 @@ https://github.com/nodeca/pako/blob/main/LICENSE
               if (myRenderToken === readerRenderToken) {
                 updateReaderPaginationIndicator();
                 captureStableReaderStateSnapshot({ updateBookMeta: false });
+                if (typeof scheduleProgressFlush === "function") {
+                  scheduleProgressFlush(180, { userInitiated: true });
+                }
               }
             });
           });
@@ -10815,12 +10901,8 @@ https://github.com/nodeca/pako/blob/main/LICENSE
 
     async function jumpToHighlight(hlId, chapterIndex) {
       document.getElementById("foliateDrawer")?.classList.add("hidden");
-      if (currentBook.currentChapter !== chapterIndex) {
-        currentBook.currentChapter = chapterIndex;
-        currentBook.chapterScrollRatio = 0;
-        currentBook.chapterAnchor = null;
-        await saveBookMeta(currentBook);
-        await renderReader({ resetScroll: true });
+      if (currentBook && currentBook.currentChapter !== chapterIndex) {
+        await navigateToReaderChapter(chapterIndex, { resetScroll: true });
       }
 
       setTimeout(() => {
@@ -10832,6 +10914,9 @@ https://github.com/nodeca/pako/blob/main/LICENSE
           setTimeout(() => {
             targetEl.style.boxShadow = "";
           }, 1500);
+          if (typeof scheduleProgressFlush === "function") {
+            scheduleProgressFlush(220, { userInitiated: true });
+          }
         }
       }, 150);
     }
@@ -10859,7 +10944,9 @@ https://github.com/nodeca/pako/blob/main/LICENSE
       if (!currentBook || !currentBook.chapters || !currentBook.chapters[currentBook.currentChapter]) return;
       const ch = currentBook.chapters[currentBook.currentChapter];
       ch.isFavorite = !ch.isFavorite;
-      await saveBookMeta(currentBook);
+      const favList = currentBook.chapters.filter(c => c.isFavorite).map(c => c.index);
+      currentBook.favoriteChapters = favList;
+      await saveBookPatch(currentBook.id, { favoriteChapters: favList }, { fallbackBook: currentBook });
       updateChapterRibbonState();
     });
 
@@ -10925,7 +11012,11 @@ https://github.com/nodeca/pako/blob/main/LICENSE
         if (idx < total) {
           setTimeout(step, 16);
         } else {
-          saveBookMeta(book);
+          saveBookPatch(
+            book.id,
+            { chapterWordCounts: Array.isArray(book.chapterWordCounts) ? [...book.chapterWordCounts] : [] },
+            { fallbackBook: book }
+          );
         }
       };
       setTimeout(step, 40);
@@ -11098,8 +11189,235 @@ https://github.com/nodeca/pako/blob/main/LICENSE
       }
     }
 
+    function createEmptySavedProgressState() {
+      return {
+        bookId: null,
+        chapter: -1,
+        ratio: -1,
+        charOffset: -1,
+        snippet: "",
+        confirmed: false,
+        seq: 0
+      };
+    }
+
+    function buildProgressSignature(candidate) {
+      if (!candidate) return "";
+      const bId = candidate.bookId || "";
+      const ch = typeof candidate.chapter === "number" ? candidate.chapter : -1;
+      const rt = typeof candidate.ratio === "number" ? candidate.ratio : -1;
+      const off = typeof candidate.charOffset === "number" ? candidate.charOffset : -1;
+      const snp = candidate.snippet || "";
+      return `${bId}|${ch}|${rt}|${off}|${snp}`;
+    }
+
     let isSwitchingChapter = false;
-    let lastSavedProgressState = { bookId: null, chapter: -1, ratio: -1 };
+    let progressThrottleTimer = null;
+    const PROGRESS_THROTTLE_MS = 2500;
+    let lastUserScrollInputAt = 0;
+    let activeRenderedChapterState = { bookId: null, chapterIdx: -1 };
+    let lastSavedProgressState = createEmptySavedProgressState();
+    let externalProgressConflictState = null;
+
+    function clearProgressTimers() {
+      clearTimeout(scrollSaveTimer);
+      scrollSaveTimer = null;
+      clearTimeout(progressThrottleTimer);
+      progressThrottleTimer = null;
+      clearTimeout(scrollStableSnapshotTimer);
+      scrollStableSnapshotTimer = null;
+    }
+
+    function extractProgressCandidateFromLive(book, chIdx, ratio, anchor) {
+      const charOffset = (anchor && typeof anchor.chapterCharOffset === "number")
+        ? anchor.chapterCharOffset
+        : -1;
+      const snippet = (anchor && typeof anchor.visibleSnippet === "string")
+        ? anchor.visibleSnippet
+        : "";
+      return {
+        bookId: book.id,
+        chapter: chIdx,
+        ratio,
+        charOffset,
+        snippet
+      };
+    }
+
+    function hasReaderProgressChanged(saved, next) {
+      if (!next || !next.bookId) return false;
+      if (!saved || !saved.confirmed) return true;
+      if (saved.bookId !== next.bookId || saved.chapter !== next.chapter) return true;
+      if (next.charOffset >= 0 && next.charOffset !== saved.charOffset) return true;
+      if ((next.snippet || "") !== (saved.snippet || "")) return true;
+      if ((next.ratio === 0 || next.ratio === 1) && next.ratio !== saved.ratio) return true;
+      if (Math.abs((saved.ratio || 0) - (next.ratio || 0)) >= 0.0005) return true;
+      return false;
+    }
+
+    function applyConfirmedProgressState(candidate, res) {
+      if (!res || res.persistedToIdb !== true || res.writtenToIdb !== true || res.skipped) return false;
+      if (isUsingTempMemoryStorage()) return false;
+      if (!currentBook || currentBook.id !== candidate.bookId) return false;
+      if ((currentBook.currentChapter || 0) !== candidate.chapter) return false;
+      const recSeq = res.record && typeof res.record.progressSeq === "number" ? res.record.progressSeq : 0;
+      if (lastSavedProgressState.confirmed && lastSavedProgressState.bookId === candidate.bookId && lastSavedProgressState.seq > recSeq) {
+        return false;
+      }
+      lastSavedProgressState = {
+        bookId: candidate.bookId,
+        chapter: candidate.chapter,
+        ratio: candidate.ratio,
+        charOffset: candidate.charOffset,
+        snippet: candidate.snippet,
+        confirmed: true,
+        seq: recSeq
+      };
+      return true;
+    }
+
+    function handleExternalProgressConflict({ bookId, diskRecord, attemptedPatch }) {
+      const attemptedCandidate = extractProgressCandidateFromLive(
+        { id: bookId },
+        typeof attemptedPatch?.currentChapter === "number" ? attemptedPatch.currentChapter : -1,
+        typeof attemptedPatch?.chapterScrollRatio === "number" ? attemptedPatch.chapterScrollRatio : -1,
+        attemptedPatch?.chapterAnchor || null
+      );
+      externalProgressConflictState = {
+        bookId,
+        rejectedSig: buildProgressSignature(attemptedCandidate),
+        diskRevision: diskRecord && typeof diskRecord.progressRevision === "number" ? diskRecord.progressRevision : 0,
+        suppressAutoFlush: true
+      };
+      // Conservar la condición de progreso no confirmado para el parche rechazado.
+      if (lastSavedProgressState && lastSavedProgressState.bookId === bookId) {
+        lastSavedProgressState = { ...lastSavedProgressState, confirmed: false };
+      }
+      updateReaderBottomProgressBar();
+    }
+
+    function handleStorageRecoverySync({ bookId, res }) {
+      if (!res || !res.persistedToIdb || !res.writtenToIdb || res.skipped || !res.record) return;
+      if (!currentBook || currentBook.id !== bookId) return;
+      const rec = res.record;
+      if ((currentBook.currentChapter || 0) !== (rec.currentChapter || 0)) return;
+      const candidate = extractProgressCandidateFromLive(
+        currentBook,
+        rec.currentChapter || 0,
+        rec.chapterScrollRatio || 0,
+        rec.chapterAnchor || null
+      );
+      applyConfirmedProgressState(candidate, res);
+    }
+
+    function scheduleProgressFlush(delayMs = 650, flushOptions = {}) {
+      clearTimeout(scrollSaveTimer);
+      scrollSaveTimer = setTimeout(() => {
+        scrollSaveTimer = null;
+        flushPendingReaderProgress(flushOptions);
+      }, delayMs);
+
+      if (!progressThrottleTimer) {
+        progressThrottleTimer = setTimeout(() => {
+          progressThrottleTimer = null;
+          flushPendingReaderProgress({ reason: "throttle", userInitiated: Boolean(flushOptions.userInitiated) });
+        }, PROGRESS_THROTTLE_MS);
+      }
+    }
+
+    async function navigateToReaderChapter(targetChapterIdx, options = {}) {
+      if (!currentBook || isSwitchingChapter) return false;
+      const totalChapters = Math.max(1, currentBook.totalChapters || (currentBook.chapters ? currentBook.chapters.length : 1));
+      const clampedTarget = Math.max(0, Math.min(targetChapterIdx, totalChapters - 1));
+
+      isSwitchingChapter = true;
+      clearProgressTimers();
+
+      try {
+        const outgoingChapter = currentBook.currentChapter || 0;
+        const domMatchesOutgoing = !(
+          activeRenderedChapterState.bookId === currentBook.id &&
+          activeRenderedChapterState.chapterIdx >= 0 &&
+          activeRenderedChapterState.chapterIdx !== outgoingChapter
+        );
+        const shouldFlushOutgoing = !options.skipOutgoingFlush && isReaderViewActive() && domMatchesOutgoing && outgoingChapter !== clampedTarget;
+
+        let outgoingBest = null;
+        if (shouldFlushOutgoing) {
+          outgoingBest = getBestStableAnchorForCurrentChapter();
+          if (!outgoingBest || (!outgoingBest.anchor && outgoingBest.ratio === 0)) {
+            const liveAnchor = captureReaderScrollAnchor();
+            if (liveAnchor && scrollArea) {
+              const maxS = Math.max(1, scrollArea.scrollHeight - scrollArea.clientHeight);
+              outgoingBest = {
+                anchor: liveAnchor,
+                ratio: Number(Math.max(0, Math.min(1, scrollArea.scrollTop / maxS)).toFixed(4))
+              };
+            }
+          }
+        }
+
+        if (typeof cancelReaderLayoutStabilization === "function") {
+          cancelReaderLayoutStabilization({ resetStableState: true });
+        }
+
+        if (shouldFlushOutgoing && outgoingBest && (outgoingBest.anchor || outgoingBest.ratio > 0)) {
+          const outCandidate = extractProgressCandidateFromLive(currentBook, outgoingChapter, outgoingBest.ratio, outgoingBest.anchor);
+          const outSig = buildProgressSignature(outCandidate);
+          const blockedOutgoing = Boolean(
+            externalProgressConflictState &&
+            externalProgressConflictState.bookId === currentBook.id &&
+            (externalProgressConflictState.suppressAutoFlush || externalProgressConflictState.rejectedSig === outSig)
+          );
+          if (!blockedOutgoing && hasReaderProgressChanged(lastSavedProgressState, outCandidate)) {
+            await saveBookProgressPatch(
+              currentBook.id,
+              {
+                currentChapter: outgoingChapter,
+                chapterScrollRatio: outgoingBest.ratio,
+                chapterAnchor: outgoingBest.anchor || null,
+                hasStartedReading: true
+              },
+              { fallbackBook: currentBook }
+            );
+          }
+        }
+
+        // Mutar capítulo destino SOLO después de capturar y encolar el capítulo saliente
+        const targetRatio = typeof options.targetRatio === "number" ? options.targetRatio : 0;
+        currentBook.currentChapter = clampedTarget;
+        currentBook.chapterScrollRatio = targetRatio;
+        currentBook.chapterAnchor = null;
+        currentBook.hasStartedReading = true;
+        externalProgressConflictState = null;
+        lastSavedProgressState = createEmptySavedProgressState();
+
+        const destCandidate = extractProgressCandidateFromLive(currentBook, clampedTarget, targetRatio, null);
+        const destRes = await saveBookProgressPatch(
+          currentBook.id,
+          {
+            currentChapter: clampedTarget,
+            chapterScrollRatio: targetRatio,
+            chapterAnchor: null,
+            hasStartedReading: true,
+            explicitUserChapterSwitch: true
+          },
+          { fallbackBook: currentBook, explicitUserChapterSwitch: true }
+        );
+        applyConfirmedProgressState(destCandidate, destRes);
+
+        if (!options.deferRender) {
+          await renderReader({
+            resetScroll: options.searchQuery ? false : (options.resetScroll !== false),
+            searchQuery: options.searchQuery,
+            matchOccurrence: options.matchOccurrence
+          });
+        }
+        return true;
+      } finally {
+        isSwitchingChapter = false;
+      }
+    }
 
     function updateReaderPaginationIndicator() {
       const indWrap = document.getElementById("readerPageIndicator");
@@ -11152,38 +11470,28 @@ https://github.com/nodeca/pako/blob/main/LICENSE
           scrollArea.scrollTop = Math.min(maxScroll, scrollArea.scrollTop + step);
           updateReaderPaginationIndicator();
           hasUserMovedAfterStabilize = false;
-          captureStableReaderStateSnapshot({ updateBookMeta: false });
-        } else if (currentBook.currentChapter < currentBook.totalChapters - 1) {
-          isSwitchingChapter = true;
-          try {
-            currentBook.currentChapter++;
-            currentBook.chapterScrollRatio = 0;
-            currentBook.chapterAnchor = null;
-            currentBook.hasStartedReading = true;
-            await saveBookMeta(currentBook);
-            await renderReader({ resetScroll: true });
-          } finally {
-            isSwitchingChapter = false;
+          // Intra-capítulo: NUNCA borra chapterAnchor; captura y actualiza el nuevo ancla v2
+          captureStableReaderStateSnapshot({ updateBookMeta: true });
+          if (externalProgressConflictState && externalProgressConflictState.bookId === currentBook.id) {
+            externalProgressConflictState.suppressAutoFlush = false;
           }
+          scheduleProgressFlush(180, { userInitiated: true });
+        } else if (currentBook.currentChapter < currentBook.totalChapters - 1) {
+          await navigateToReaderChapter(currentBook.currentChapter + 1, { resetScroll: true });
         }
       } else if (direction < 0) {
         if (scrollArea.scrollTop > 6) {
           scrollArea.scrollTop = Math.max(0, scrollArea.scrollTop - step);
           updateReaderPaginationIndicator();
           hasUserMovedAfterStabilize = false;
-          captureStableReaderStateSnapshot({ updateBookMeta: false });
-        } else if (currentBook.currentChapter > 0) {
-          isSwitchingChapter = true;
-          try {
-            currentBook.currentChapter--;
-            currentBook.chapterScrollRatio = 0;
-            currentBook.chapterAnchor = null;
-            currentBook.hasStartedReading = true;
-            await saveBookMeta(currentBook);
-            await renderReader({ resetScroll: true });
-          } finally {
-            isSwitchingChapter = false;
+          // Intra-capítulo: NUNCA borra chapterAnchor; captura y actualiza el nuevo ancla v2
+          captureStableReaderStateSnapshot({ updateBookMeta: true });
+          if (externalProgressConflictState && externalProgressConflictState.bookId === currentBook.id) {
+            externalProgressConflictState.suppressAutoFlush = false;
           }
+          scheduleProgressFlush(180, { userInitiated: true });
+        } else if (currentBook.currentChapter > 0) {
+          await navigateToReaderChapter(currentBook.currentChapter - 1, { resetScroll: true });
         }
       }
     }
@@ -11205,6 +11513,7 @@ https://github.com/nodeca/pako/blob/main/LICENSE
           const dy = Math.abs(e.touches[0].clientY - touchStartY);
           if (dx > 10 || dy > 10) {
             isUserTouchDragging = true;
+            lastUserScrollInputAt = Date.now();
             if (activeStabilizationSession) {
               cancelReaderLayoutStabilization({ resetStableState: false });
             }
@@ -11246,6 +11555,7 @@ https://github.com/nodeca/pako/blob/main/LICENSE
 
       scrollArea.addEventListener("wheel", (e) => {
         if (Math.abs(e.deltaY) > 0 || Math.abs(e.deltaX) > 0) {
+          lastUserScrollInputAt = Date.now();
           if (activeStabilizationSession) {
             cancelReaderLayoutStabilization({ resetStableState: false });
           }
@@ -11269,13 +11579,21 @@ https://github.com/nodeca/pako/blob/main/LICENSE
           });
         }
 
-        if (isRestoringScroll || activeStabilizationSession || !currentBook) return;
+        if (isRestoringScroll || activeStabilizationSession || isSwitchingChapter || !currentBook) return;
 
         hasUserMovedAfterStabilize = true;
+        if (
+          externalProgressConflictState &&
+          externalProgressConflictState.bookId === currentBook.id &&
+          (isUserTouchDragging || (Date.now() - lastUserScrollInputAt) < 1200) &&
+          !(activeRenderedChapterState.bookId === currentBook.id && activeRenderedChapterState.chapterIdx >= 0 && activeRenderedChapterState.chapterIdx !== (currentBook.currentChapter || 0))
+        ) {
+          externalProgressConflictState.suppressAutoFlush = false;
+        }
         clearTimeout(scrollStableSnapshotTimer);
         scrollStableSnapshotTimer = setTimeout(() => {
           scrollStableSnapshotTimer = null;
-          if (!isRestoringScroll && !activeStabilizationSession && !isUserTouchDragging) {
+          if (!isRestoringScroll && !activeStabilizationSession && !isUserTouchDragging && !isSwitchingChapter) {
             captureStableReaderStateSnapshot({ updateBookMeta: false });
             hasUserMovedAfterStabilize = false;
           }
@@ -11292,10 +11610,7 @@ https://github.com/nodeca/pako/blob/main/LICENSE
           }
         }
 
-        clearTimeout(scrollSaveTimer);
-        scrollSaveTimer = setTimeout(() => {
-          flushPendingReaderProgress();
-        }, 650);
+        scheduleProgressFlush(650, { userInitiated: true });
       }, { passive: true });
     }
 
@@ -11304,15 +11619,18 @@ https://github.com/nodeca/pako/blob/main/LICENSE
       const tag = document.activeElement ? document.activeElement.tagName : "";
       if (tag === "INPUT" || tag === "TEXTAREA" || document.activeElement?.isContentEditable) return;
       if (["ArrowUp", "ArrowDown", "PageUp", "PageDown", " ", "Home", "End"].includes(e.key)) {
+        lastUserScrollInputAt = Date.now();
         if (activeStabilizationSession) {
           cancelReaderLayoutStabilization({ resetStableState: false });
         }
       }
     });
 
-    function flushPendingReaderProgress() {
+    async function flushPendingReaderProgress(options = {}) {
       clearTimeout(scrollSaveTimer);
       scrollSaveTimer = null;
+      clearTimeout(progressThrottleTimer);
+      progressThrottleTimer = null;
       clearTimeout(scrollStableSnapshotTimer);
       scrollStableSnapshotTimer = null;
       if (typeof readerConfigSaveTimer !== "undefined" && readerConfigSaveTimer) {
@@ -11320,16 +11638,47 @@ https://github.com/nodeca/pako/blob/main/LICENSE
         readerConfigSaveTimer = null;
         dbSave("settings", { key: "readerConfig", val: readerConfig });
       }
-      if (!currentBook || !scrollArea || isRestoringScroll || activeStabilizationSession) return;
+      if (!currentBook || !scrollArea || isRestoringScroll || activeStabilizationSession || isSwitchingChapter) {
+        return { ok: false, persistedToIdb: false, writtenToIdb: false, skipped: true, reason: "reader-busy" };
+      }
       const readerView = document.getElementById("viewReader");
-      if (!readerView || readerView.classList.contains("hidden")) return;
+      if (!readerView || readerView.classList.contains("hidden")) {
+        return { ok: false, persistedToIdb: false, writtenToIdb: false, skipped: true, reason: "reader-hidden" };
+      }
+      const chIdx = currentBook.currentChapter || 0;
+      if (
+        activeRenderedChapterState.bookId === currentBook.id &&
+        activeRenderedChapterState.chapterIdx >= 0 &&
+        activeRenderedChapterState.chapterIdx !== chIdx
+      ) {
+        return { ok: false, persistedToIdb: false, writtenToIdb: false, skipped: true, reason: "chapter-dom-mismatch" };
+      }
       const liveAnchor = captureReaderScrollAnchor();
-      if (!liveAnchor) return;
+      if (!liveAnchor) {
+        return { ok: false, persistedToIdb: false, writtenToIdb: false, skipped: true, reason: "no-anchor" };
+      }
       hasUserMovedAfterStabilize = false;
       const maxScroll = Math.max(1, scrollArea.scrollHeight - scrollArea.clientHeight);
       const ratio = Math.max(0, Math.min(1, scrollArea.scrollTop / maxScroll));
       const nextRatio = Number(ratio.toFixed(4));
-      const chIdx = currentBook.currentChapter || 0;
+
+      const candidate = extractProgressCandidateFromLive(currentBook, chIdx, nextRatio, liveAnchor);
+      const candidateSig = buildProgressSignature(candidate);
+
+      if (
+        externalProgressConflictState &&
+        externalProgressConflictState.bookId === currentBook.id &&
+        (externalProgressConflictState.suppressAutoFlush || candidateSig === externalProgressConflictState.rejectedSig)
+      ) {
+        return {
+          ok: true,
+          persistedToIdb: false,
+          writtenToIdb: false,
+          skipped: true,
+          reason: "suppressed-external-conflict"
+        };
+      }
+
       recordReadingPaceSample(currentBook, chIdx, ratio);
       const wasStarted = Boolean(currentBook.hasStartedReading);
       currentBook.chapterScrollRatio = nextRatio;
@@ -11346,20 +11695,47 @@ https://github.com/nodeca/pako/blob/main/LICENSE
       };
       updateReaderBottomProgressBar();
 
-      const sameTarget = lastSavedProgressState.bookId === currentBook.id && lastSavedProgressState.chapter === chIdx;
-      if (wasStarted && sameTarget && Math.abs(lastSavedProgressState.ratio - nextRatio) < 0.002) {
-        return;
+      if (wasStarted && !hasReaderProgressChanged(lastSavedProgressState, candidate)) {
+        return {
+          ok: true,
+          persistedToIdb: false,
+          writtenToIdb: false,
+          skipped: true,
+          reason: "unchanged"
+        };
       }
-      lastSavedProgressState = { bookId: currentBook.id, chapter: chIdx, ratio: nextRatio };
-      saveBookMeta(currentBook);
+
+      const res = await saveBookProgressPatch(
+        currentBook.id,
+        {
+          currentChapter: chIdx,
+          chapterScrollRatio: nextRatio,
+          chapterAnchor: liveAnchor,
+          hasStartedReading: true
+        },
+        { fallbackBook: currentBook }
+      );
+
+      // Solo confirmar lastSavedProgressState cuando hubo store.put() real + tx.oncomplete (no en skipped ni RAM)
+      applyConfirmedProgressState(candidate, res);
+      return res;
     }
 
     document.addEventListener("visibilitychange", () => {
       if (document.visibilityState === "hidden") {
-        flushPendingReaderProgress();
+        flushPendingReaderProgress({ reason: "visibilitychange" });
+      } else if (document.visibilityState === "visible") {
+        if (typeof resetDbRetryCooldown === "function") resetDbRetryCooldown();
+        if (window.NyxenStorage && window.NyxenStorage.raw) {
+          if (!window.NyxenStorage.raw.hasDatabase() || window.NyxenStorage.raw.getPendingRecoveryPatchesCount() > 0) {
+            ensureDb().catch(() => {});
+          }
+        }
       }
     });
-    window.addEventListener("pagehide", flushPendingReaderProgress);
+    window.addEventListener("pagehide", () => flushPendingReaderProgress({ reason: "pagehide" }));
+    document.addEventListener("freeze", () => flushPendingReaderProgress({ reason: "freeze" }));
+    window.addEventListener("beforeunload", () => flushPendingReaderProgress({ reason: "beforeunload" }));
 
     function handleReaderViewportDimensionChange() {
       if (!isReaderViewActive()) return;
@@ -11516,34 +11892,14 @@ https://github.com/nodeca/pako/blob/main/LICENSE
     safeOn("btnSidePrev", "click", async () => {
       if (!currentBook || isSwitchingChapter) return;
       if (currentBook.currentChapter > 0) {
-        isSwitchingChapter = true;
-        try {
-          currentBook.currentChapter--;
-          currentBook.chapterScrollRatio = 0;
-          currentBook.chapterAnchor = null;
-          currentBook.hasStartedReading = true;
-          await saveBookMeta(currentBook);
-          await renderReader({ resetScroll: true });
-        } finally {
-          isSwitchingChapter = false;
-        }
+        await navigateToReaderChapter(currentBook.currentChapter - 1, { resetScroll: true });
       }
     });
 
     safeOn("btnSideNext", "click", async () => {
       if (!currentBook || isSwitchingChapter) return;
       if (currentBook.currentChapter < currentBook.totalChapters - 1) {
-        isSwitchingChapter = true;
-        try {
-          currentBook.currentChapter++;
-          currentBook.chapterScrollRatio = 0;
-          currentBook.chapterAnchor = null;
-          currentBook.hasStartedReading = true;
-          await saveBookMeta(currentBook);
-          await renderReader({ resetScroll: true });
-        } finally {
-          isSwitchingChapter = false;
-        }
+        await navigateToReaderChapter(currentBook.currentChapter + 1, { resetScroll: true });
       }
     });
 
@@ -11778,14 +12134,14 @@ https://github.com/nodeca/pako/blob/main/LICENSE
 
     function formatHighlightLocator(hl) {
       if (!hl) return "";
-      if (typeof hl.posPct === "number" && !Number.isNaN(hl.posPct)) {
-        const pct = Math.max(0, Math.min(100, Math.round(hl.posPct)));
-        return `Pos. ${pct}%`;
+      const rawCh = typeof hl.chapterIndex === "number" && Number.isFinite(hl.chapterIndex) ? hl.chapterIndex : 0;
+      const chNum = Math.max(1, Math.floor(rawCh) + 1);
+      const chLabel = `${currentLang === "es" ? "Cap." : "Ch."} ${chNum}`;
+      if (typeof hl.page === "number" && Number.isFinite(hl.page) && hl.page > 0) {
+        const pageLabel = `${currentLang === "es" ? "Pág." : "Page"} ${hl.page}`;
+        return `${chLabel} · ${pageLabel}`;
       }
-      if (typeof hl.page === "number" && hl.page > 0) {
-        return `~${currentLang === "es" ? "Pág." : "Page"} ${hl.page}`;
-      }
-      return `${currentLang === "es" ? "Cap." : "Ch."} ${(hl.chapterIndex ?? 0) + 1}`;
+      return chLabel;
     }
 
     function exportBookAnnotations(format) {
@@ -12035,12 +12391,7 @@ https://github.com/nodeca/pako/blob/main/LICENSE
           </div>
         `;
         row.addEventListener("click", async () => {
-          currentBook.currentChapter = idx;
-          currentBook.chapterScrollRatio = 0;
-          currentBook.chapterAnchor = null;
-          currentBook.hasStartedReading = true;
-          await saveBookMeta(currentBook);
-          await renderReader({ resetScroll: true });
+          await navigateToReaderChapter(idx, { resetScroll: true });
           document.getElementById("foliateDrawer")?.classList.add("hidden");
         });
         tocFrag.appendChild(row);
@@ -12061,7 +12412,7 @@ https://github.com/nodeca/pako/blob/main/LICENSE
     async function deleteHighlightById(hlId) {
       if (!currentBook) return;
       currentBook.highlights = (currentBook.highlights || []).filter(h => h.id !== hlId);
-      await saveBookMeta(currentBook);
+      await saveBookPatch(currentBook.id, { highlights: currentBook.highlights }, { fallbackBook: currentBook });
 
       document.querySelectorAll(`.hl-note-indicator[data-note-for="${hlId}"], .hl-note-indicator[data-hl-id="${hlId}"]`).forEach(el => {
         el.remove();
@@ -12333,11 +12684,7 @@ https://github.com/nodeca/pako/blob/main/LICENSE
           <span class="text-[10px] opacity-50 font-mono">${ch.index + 1}</span>
         `;
         row.addEventListener("click", async () => {
-          currentBook.currentChapter = ch.index;
-          currentBook.chapterScrollRatio = 0;
-          currentBook.chapterAnchor = null;
-          await saveBookMeta(currentBook);
-          await renderReader({ resetScroll: true });
+          await navigateToReaderChapter(ch.index, { resetScroll: true });
           document.getElementById("foliateDrawer")?.classList.add("hidden");
         });
         container.appendChild(row);
@@ -12672,13 +13019,15 @@ https://github.com/nodeca/pako/blob/main/LICENSE
         const totalForHistory = activeSearchRenderState ? activeSearchRenderState.matches.length : 1;
         await saveBookSearchHistoryEntry(currentBook.id, displayQuery, totalForHistory);
         if (currentBook.currentChapter !== matchItem.chapterIndex) {
-          currentBook.currentChapter = matchItem.chapterIndex;
-          currentBook.chapterScrollRatio = 0;
-          currentBook.chapterAnchor = null;
+          await navigateToReaderChapter(matchItem.chapterIndex, {
+            searchQuery: displayQuery,
+            matchOccurrence: matchItem.matchOccurrence
+          });
+        } else {
+          currentBook.hasStartedReading = true;
+          await saveBookProgressPatch(currentBook.id, { hasStartedReading: true }, { fallbackBook: currentBook });
+          await renderReader({ searchQuery: displayQuery, matchOccurrence: matchItem.matchOccurrence });
         }
-        currentBook.hasStartedReading = true;
-        await saveBookMeta(currentBook);
-        await renderReader({ searchQuery: displayQuery, matchOccurrence: matchItem.matchOccurrence });
         document.getElementById("drawerSearchFullView")?.classList.add("hidden");
         document.getElementById("drawerMainContainer")?.classList.remove("hidden");
         document.getElementById("foliateDrawer")?.classList.add("hidden");
@@ -13494,7 +13843,7 @@ https://github.com/nodeca/pako/blob/main/LICENSE
 
       if (!Array.isArray(currentBook.highlights)) currentBook.highlights = [];
       currentBook.highlights.push(hlRecord);
-      saveBookMeta(currentBook);
+      saveBookPatch(currentBook.id, { highlights: currentBook.highlights }, { fallbackBook: currentBook });
 
       wrapRangeTextNodes(selectedTextRange, hlId, color, activeHighlightStyle);
 
@@ -13592,11 +13941,7 @@ https://github.com/nodeca/pako/blob/main/LICENSE
                 return chHref && chHref === cleanTarget;
               });
               if (foundIdx !== -1 && foundIdx !== currentBook.currentChapter) {
-                currentBook.currentChapter = foundIdx;
-                currentBook.chapterScrollRatio = 0;
-                currentBook.chapterAnchor = null;
-                await saveBookMeta(currentBook);
-                await renderReader({ resetScroll: true });
+                await navigateToReaderChapter(foundIdx, { resetScroll: true });
                 return;
               }
             }
@@ -13645,7 +13990,7 @@ https://github.com/nodeca/pako/blob/main/LICENSE
         else sp.style.borderBottomColor = hl.color;
       });
       syncExistingHighlightPopupUI();
-      saveBookMeta(currentBook);
+      saveBookPatch(currentBook.id, { highlights: currentBook.highlights }, { fallbackBook: currentBook });
       const drawer = document.getElementById("foliateDrawer");
       if (drawer && !drawer.classList.contains("hidden")) {
         renderDrawerHighlights();
@@ -13769,7 +14114,7 @@ https://github.com/nodeca/pako/blob/main/LICENSE
           }
         });
         syncExistingHighlightPopupUI();
-        await saveBookMeta(currentBook);
+        await saveBookPatch(currentBook.id, { highlights: currentBook.highlights }, { fallbackBook: currentBook });
       }
     });
 
@@ -16138,7 +16483,7 @@ https://github.com/nodeca/pako/blob/main/LICENSE
           syncHighlightNoteIndicator(createdHl.id, noteText);
         }
       }
-      await saveBookMeta(currentBook);
+      await saveBookPatch(currentBook.id, { highlights: currentBook.highlights }, { fallbackBook: currentBook });
       document.getElementById("noteModal")?.classList.add("hidden");
       activeClickedHighlightId = null;
 

@@ -34,10 +34,28 @@
 
   let db = null;
   let dbOpeningPromise = null;
+  let pendingOpenState = null;
   let dbInitBlocked = false;
+  let dbPermanentUnavailable = false;
+  let dbRetryNotBefore = 0;
   let lastHydratedBookId = null;
+  let lastIssuedProgressTs = 0;
+  let recoveryDrainScheduled = false;
+
+  const DB_OPEN_TIMEOUT_MS = 4500;
+  const DB_RETRY_COOLDOWN_MS = 8000;
+  const STORAGE_SESSION_ID = (
+    globalScope.crypto && typeof globalScope.crypto.randomUUID === "function"
+      ? globalScope.crypto.randomUUID()
+      : ("sess_" + Date.now().toString(36) + "_" + Math.random().toString(36).slice(2, 10))
+  );
 
   const activeObjectUrls = new Map();
+  const bookWriteQueues = new Map();
+  const knownDiskRevisionByBook = new Map();
+  const bookSeqCounters = new Map();
+  const pendingRecoveryProgressPatches = new Map();
+  const deletedBookIdsInSession = new Set();
 
   // UI & state integration hooks configured by the host application
   const hooks = {
@@ -47,7 +65,9 @@
     setBooksList: () => {},
     getCurrentBook: () => null,
     onBeforeDeleteBook: null,
-    onRevokeCover: null
+    onRevokeCover: null,
+    onExternalProgressConflict: null,
+    onRecoverySync: null
   };
 
   function configure(options = {}) {
@@ -59,12 +79,14 @@
     if (typeof options.getCurrentBook === "function") hooks.getCurrentBook = options.getCurrentBook;
     if (typeof options.onBeforeDeleteBook === "function") hooks.onBeforeDeleteBook = options.onBeforeDeleteBook;
     if (typeof options.onRevokeCover === "function") hooks.onRevokeCover = options.onRevokeCover;
+    if (typeof options.onExternalProgressConflict === "function") hooks.onExternalProgressConflict = options.onExternalProgressConflict;
+    if (typeof options.onRecoverySync === "function") hooks.onRecoverySync = options.onRecoverySync;
   }
 
   function notifyStatusChange() {
     if (typeof hooks.onStatusChange === "function") {
       try {
-        hooks.onStatusChange({ blocked: dbInitBlocked, hasDb: Boolean(db) });
+        hooks.onStatusChange({ blocked: dbInitBlocked, hasDb: Boolean(db), permanent: dbPermanentUnavailable });
       } catch (e) {}
     }
   }
@@ -81,6 +103,10 @@
     return Boolean(err && (err.name === "QuotaExceededError" || err.code === 22));
   }
 
+  function isInvalidStateError(err) {
+    return Boolean(err && (err.name === "InvalidStateError" || String(err.message || "").toLowerCase().includes("closing")));
+  }
+
   function isUsingTempMemoryStorage() {
     return Boolean(dbInitBlocked || !db);
   }
@@ -93,6 +119,61 @@
     return Boolean(db);
   }
 
+  function getSessionId() {
+    return STORAGE_SESSION_ID;
+  }
+
+  /**
+   * progressUpdatedAt es exclusivamente una referencia temporal auxiliar del reloj local.
+   * No debe usarse como verdad absoluta entre sesiones distintas.
+   */
+  function nextMonotonicProgressTimestamp() {
+    lastIssuedProgressTs = Math.max(Date.now(), lastIssuedProgressTs + 1);
+    return lastIssuedProgressTs;
+  }
+
+  function registerBookDiskRevision(record) {
+    if (!record || !record.id) return;
+    const rev = typeof record.progressRevision === "number" && Number.isFinite(record.progressRevision)
+      ? record.progressRevision
+      : 0;
+    const prevKnown = knownDiskRevisionByBook.get(record.id);
+    if (prevKnown === undefined || rev > prevKnown) {
+      knownDiskRevisionByBook.set(record.id, rev);
+    }
+    const diskSeq = typeof record.progressSeq === "number" && Number.isFinite(record.progressSeq)
+      ? record.progressSeq
+      : 0;
+    const curSeq = bookSeqCounters.get(record.id) || 0;
+    if (diskSeq > curSeq) {
+      bookSeqCounters.set(record.id, diskSeq);
+    }
+  }
+
+  function registerLoadedBooksRevisions(records) {
+    if (!Array.isArray(records)) return;
+    for (let i = 0; i < records.length; i++) {
+      if (records[i] && records[i].id) {
+        registerBookDiskRevision(records[i]);
+      }
+    }
+  }
+
+  function resetRetryCooldown() {
+    if (!dbPermanentUnavailable) {
+      dbRetryNotBefore = 0;
+    }
+  }
+
+  function scheduleDrainRecoveryPatches() {
+    if (recoveryDrainScheduled || pendingRecoveryProgressPatches.size === 0 || !db) return;
+    recoveryDrainScheduled = true;
+    setTimeout(() => {
+      recoveryDrainScheduled = false;
+      drainPendingRecoveryProgressPatches().catch(() => {});
+    }, 0);
+  }
+
   async function requestPersistentStorage() {
     try {
       if (navigator.storage && typeof navigator.storage.persist === "function") {
@@ -102,34 +183,104 @@
     } catch (e) {}
   }
 
+  function waitWithTimeout(promise, ms) {
+    return new Promise((resolve) => {
+      let done = false;
+      const timer = setTimeout(() => {
+        if (done) return;
+        done = true;
+        resolve({ timedOut: true, db: null });
+      }, ms);
+      promise.then((resDb) => {
+        if (done) return;
+        done = true;
+        clearTimeout(timer);
+        resolve({ timedOut: false, db: resDb || null });
+      }).catch(() => {
+        if (done) return;
+        done = true;
+        clearTimeout(timer);
+        resolve({ timedOut: false, db: null });
+      });
+    });
+  }
+
   function openDatabase() {
     if (db) return Promise.resolve(db);
-    if (dbOpeningPromise) return dbOpeningPromise;
-    dbOpeningPromise = new Promise((resolve) => {
-      if (!globalScope.indexedDB) {
-        console.warn("IndexedDB no disponible, usando almacenamiento en memoria.");
-        dbInitBlocked = true;
-        notifyStatusChange();
-        resolve(null);
-        return;
-      }
+    if (dbPermanentUnavailable) return Promise.resolve(null);
 
-      let settled = false;
-      const finish = (val) => {
-        if (settled) return;
-        settled = true;
+    // Si hay una petición indexedDB.open() todavía pendiente en el navegador (p. ej. tras onblocked o timeout),
+    // nunca lanzamos una segunda apertura paralela.
+    if (pendingOpenState && !pendingOpenState.finished) {
+      if (Date.now() < dbRetryNotBefore) {
+        return Promise.resolve(null);
+      }
+      return waitWithTimeout(pendingOpenState.lifecyclePromise, DB_OPEN_TIMEOUT_MS).then(({ timedOut, db: resDb }) => {
+        if (timedOut) {
+          dbInitBlocked = true;
+          dbRetryNotBefore = Date.now() + DB_RETRY_COOLDOWN_MS;
+          notifyStatusChange();
+          return null;
+        }
+        return resDb;
+      });
+    }
+
+    if (Date.now() < dbRetryNotBefore) {
+      return Promise.resolve(null);
+    }
+    if (dbOpeningPromise) return dbOpeningPromise;
+
+    if (!globalScope.indexedDB) {
+      console.warn("IndexedDB no disponible, usando almacenamiento en memoria.");
+      dbPermanentUnavailable = true;
+      dbInitBlocked = true;
+      notifyStatusChange();
+      return Promise.resolve(null);
+    }
+
+    const state = {
+      req: null,
+      finished: false,
+      lifecyclePromise: null
+    };
+    pendingOpenState = state;
+
+    let resolveLifecycle;
+    state.lifecyclePromise = new Promise((res) => {
+      resolveLifecycle = res;
+    });
+
+    dbOpeningPromise = new Promise((resolveCaller) => {
+      let callerSettled = false;
+      const settleCaller = (val) => {
+        if (callerSettled) return;
+        callerSettled = true;
         clearTimeout(guardTimer);
         notifyStatusChange();
-        resolve(val);
+        resolveCaller(val);
       };
+
+      const finishLifecycle = (resolvedDb) => {
+        if (state.finished) return;
+        state.finished = true;
+        if (pendingOpenState === state) {
+          pendingOpenState = null;
+        }
+        resolveLifecycle(resolvedDb || null);
+      };
+
       const guardTimer = setTimeout(() => {
-        console.warn("IndexedDB tardó demasiado en abrir, usando fallback temporal.");
+        console.warn("IndexedDB tardó demasiado en abrir, usando fallback temporal sin duplicar petición.");
         dbInitBlocked = true;
-        finish(null);
-      }, 4500);
+        dbRetryNotBefore = Date.now() + DB_RETRY_COOLDOWN_MS;
+        // IMPORTANTE: NO limpiamos pendingOpenState aquí porque state.req sigue pendiente.
+        settleCaller(null);
+      }, DB_OPEN_TIMEOUT_MS);
 
       try {
         const req = globalScope.indexedDB.open(DB_NAME, DB_VERSION);
+        state.req = req;
         req.onupgradeneeded = (e) => {
           const d = e.target.result;
           Object.entries(STORE_KEY_PATHS).forEach(([store, keyPath]) => {
@@ -139,41 +290,67 @@
           });
         };
         req.onsuccess = () => {
-          db = req.result;
+          const openedDb = req.result;
+          db = openedDb;
           dbInitBlocked = false;
-          db.onversionchange = () => {
-            try { db.close(); } catch (e) {}
-            db = null;
+          dbRetryNotBefore = 0;
+          openedDb.onversionchange = () => {
+            try { openedDb.close(); } catch (e) {}
+            if (db === openedDb) {
+              db = null;
+              notifyStatusChange();
+            }
           };
-          db.onclose = () => {
-            db = null;
+          openedDb.onclose = () => {
+            if (db === openedDb) {
+              db = null;
+              notifyStatusChange();
+            }
           };
-          finish(db);
+          finishLifecycle(openedDb);
+          settleCaller(openedDb);
+          scheduleDrainRecoveryPatches();
         };
         req.onerror = () => {
-          console.warn("IndexedDB bloqueado por permisos iframe, usando fallback en memoria.");
+          const err = req.error;
+          console.warn("Error abriendo IndexedDB, usando fallback temporal:", err && err.name);
+          if (err && err.name === "SecurityError") {
+            dbPermanentUnavailable = true;
+          } else {
+            dbRetryNotBefore = Date.now() + DB_RETRY_COOLDOWN_MS;
+          }
           dbInitBlocked = true;
-          finish(null);
+          finishLifecycle(null);
+          settleCaller(null);
         };
         req.onblocked = () => {
           console.warn("IndexedDB bloqueado por otra pestaña.");
           dbInitBlocked = true;
-          finish(null);
+          dbRetryNotBefore = Date.now() + DB_RETRY_COOLDOWN_MS;
+          // IMPORTANTE: NO limpiamos pendingOpenState ni emitimos otro indexedDB.open() mientras req siga bloqueado.
+          settleCaller(null);
         };
       } catch (err) {
         console.warn("Excepción abriendo IndexedDB:", err);
+        if (err && err.name === "SecurityError") {
+          dbPermanentUnavailable = true;
+        } else {
+          dbRetryNotBefore = Date.now() + DB_RETRY_COOLDOWN_MS;
+        }
         dbInitBlocked = true;
-        finish(null);
+        finishLifecycle(null);
+        settleCaller(null);
       }
     }).finally(() => {
       dbOpeningPromise = null;
     });
+
     return dbOpeningPromise;
   }
 
   async function ensureDb() {
     if (db) return db;
-    if (dbInitBlocked) return null;
+    if (dbPermanentUnavailable) return null;
     return await openDatabase();
   }
 
@@ -186,72 +363,122 @@
     else inMemoryDb[storeName].push(item);
   }
 
-  async function dbSave(storeName, item) {
-    const conn = await ensureDb();
-    return new Promise((resolve) => {
-      if (!conn) {
-        putInMemoryStore(storeName, item);
-        resolve(true);
-        return;
-      }
+  function handleTransactionFailureAndMaybeReset(conn, err) {
+    if (isInvalidStateError(err) && db === conn) {
+      db = null;
+      notifyStatusChange();
+      return true;
+    }
+    return false;
+  }
 
+  async function dbSave(storeName, item) {
+    let conn = await ensureDb();
+    if (!conn) {
+      putInMemoryStore(storeName, item);
+      return true;
+    }
+
+    const attempt = (targetConn) => new Promise((resolve) => {
+      let settled = false;
+      const finish = (res) => {
+        if (settled) return;
+        settled = true;
+        resolve(res);
+      };
       try {
-        const tx = conn.transaction(storeName, "readwrite");
+        const tx = targetConn.transaction(storeName, "readwrite");
         tx.objectStore(storeName).put(item);
-        tx.oncomplete = () => resolve(true);
+        tx.oncomplete = () => finish({ ok: true, retryableInvalidState: false });
         tx.onerror = (ev) => {
           const err = tx.error || ev?.target?.error;
           if (isQuotaError(err)) notifyQuotaExceeded();
-          resolve(false);
+          const retryable = handleTransactionFailureAndMaybeReset(targetConn, err);
+          finish({ ok: false, retryableInvalidState: retryable });
         };
         tx.onabort = () => {
-          if (isQuotaError(tx.error)) notifyQuotaExceeded();
-          resolve(false);
+          const err = tx.error;
+          if (isQuotaError(err)) notifyQuotaExceeded();
+          const retryable = handleTransactionFailureAndMaybeReset(targetConn, err);
+          finish({ ok: false, retryableInvalidState: retryable });
         };
       } catch (e) {
-        resolve(false);
+        const retryable = handleTransactionFailureAndMaybeReset(targetConn, e);
+        finish({ ok: false, retryableInvalidState: retryable });
       }
     });
+
+    let res = await attempt(conn);
+    if (!res.ok && res.retryableInvalidState) {
+      resetRetryCooldown();
+      conn = await ensureDb();
+      if (conn) {
+        res = await attempt(conn);
+      }
+    }
+    return Boolean(res.ok);
   }
 
   async function dbGet(storeName, key) {
-    const conn = await ensureDb();
-    return new Promise((resolve) => {
-      const keyProp = STORE_KEY_PATHS[storeName] || "key";
-      if (!conn) {
-        const list = inMemoryDb[storeName] || [];
-        resolve(list.find(x => x && x[keyProp] === key) || null);
-        return;
-      }
+    let conn = await ensureDb();
+    const keyProp = STORE_KEY_PATHS[storeName] || "key";
+    if (!conn) {
+      const list = inMemoryDb[storeName] || [];
+      return list.find(x => x && x[keyProp] === key) || null;
+    }
 
+    const attempt = (targetConn) => new Promise((resolve) => {
       try {
-        const tx = conn.transaction(storeName, "readonly");
+        const tx = targetConn.transaction(storeName, "readonly");
         const req = tx.objectStore(storeName).get(key);
-        req.onsuccess = () => resolve(req.result || null);
-        req.onerror = () => resolve(null);
+        req.onsuccess = () => resolve({ ok: true, value: req.result || null, retryableInvalidState: false });
+        req.onerror = () => resolve({ ok: false, value: null, retryableInvalidState: false });
       } catch (e) {
-        resolve(null);
+        const retryable = handleTransactionFailureAndMaybeReset(targetConn, e);
+        resolve({ ok: false, value: null, retryableInvalidState: retryable });
       }
     });
+
+    let res = await attempt(conn);
+    if (!res.ok && res.retryableInvalidState) {
+      resetRetryCooldown();
+      conn = await ensureDb();
+      if (conn) res = await attempt(conn);
+    }
+    if (res.ok && storeName === "books" && res.value) {
+      registerBookDiskRevision(res.value);
+    }
+    return res.value;
   }
 
   async function dbGetAll(storeName) {
-    const conn = await ensureDb();
-    return new Promise((resolve) => {
-      if (!conn) {
-        resolve(inMemoryDb[storeName] || []);
-        return;
-      }
+    let conn = await ensureDb();
+    if (!conn) {
+      return inMemoryDb[storeName] || [];
+    }
 
+    const attempt = (targetConn) => new Promise((resolve) => {
       try {
-        const tx = conn.transaction(storeName, "readonly");
+        const tx = targetConn.transaction(storeName, "readonly");
         const req = tx.objectStore(storeName).getAll();
-        req.onsuccess = () => resolve(req.result || []);
-        req.onerror = () => resolve(inMemoryDb[storeName] || []);
+        req.onsuccess = () => resolve({ ok: true, value: req.result || [], retryableInvalidState: false });
+        req.onerror = () => resolve({ ok: false, value: inMemoryDb[storeName] || [], retryableInvalidState: false });
       } catch (e) {
-        resolve(inMemoryDb[storeName] || []);
+        const retryable = handleTransactionFailureAndMaybeReset(targetConn, e);
+        resolve({ ok: false, value: inMemoryDb[storeName] || [], retryableInvalidState: retryable });
       }
     });
+
+    let res = await attempt(conn);
+    if (!res.ok && res.retryableInvalidState) {
+      resetRetryCooldown();
+      conn = await ensureDb();
+      if (conn) res = await attempt(conn);
+    }
+    if (res.ok && storeName === "books") {
+      registerLoadedBooksRevisions(res.value);
+    }
+    return res.value;
   }
 
   async function dbGetAllKeys(storeName) {
@@ -280,6 +507,12 @@
   }
 
   async function dbClear(storeName) {
+    if (storeName === "books") {
+      knownDiskRevisionByBook.clear();
+      bookSeqCounters.clear();
+      pendingRecoveryProgressPatches.clear();
+      deletedBookIdsInSession.clear();
+    }
     const conn = await ensureDb();
     return new Promise((resolve) => {
       inMemoryDb[storeName] = [];
@@ -553,8 +786,24 @@
     return Array.from(seen.values());
   }
 
-  async function saveBookMeta(book) {
-    if (!book || !book.id) return false;
+  const PROGRESS_FIELDS = [
+    "currentChapter",
+    "chapterScrollRatio",
+    "chapterAnchor",
+    "hasStartedReading",
+    "progressRevision",
+    "progressSeq",
+    "progressSessionId",
+    "progressUpdatedAt"
+  ];
+
+  function sanitizeRatingValue(rating) {
+    return typeof rating === "number" && rating > 0
+      ? Math.min(5, Math.max(0.5, Math.round(rating * 2) / 2))
+      : 0;
+  }
+
+  function buildMetaRecord(book) {
     const cols = getBookCollections(book);
     const metaRecord = {
       id: book.id,
@@ -575,7 +824,7 @@
       groups: cols.length > 0 ? cols : undefined,
       addedAt: book.addedAt || Date.now(),
       lastOpenedAt: book.lastOpenedAt || 0,
-      rating: typeof book.rating === "number" && book.rating > 0 ? Math.min(5, Math.max(0.5, Math.round(book.rating * 2) / 2)) : 0,
+      rating: sanitizeRatingValue(book.rating),
       review: typeof book.review === "string" ? book.review : "",
       reviewedAt: typeof book.reviewedAt === "number" ? book.reviewedAt : 0,
       highlights: book.highlights || [],
@@ -584,38 +833,648 @@
         ? book.chapters.filter(c => c.isFavorite).map(c => c.index)
         : (book.favoriteChapters || [])
     };
+    if (typeof book.progressRevision === "number" && Number.isFinite(book.progressRevision)) {
+      metaRecord.progressRevision = book.progressRevision;
+    }
+    if (typeof book.progressSeq === "number" && Number.isFinite(book.progressSeq)) {
+      metaRecord.progressSeq = book.progressSeq;
+    }
+    if (typeof book.progressSessionId === "string" && book.progressSessionId) {
+      metaRecord.progressSessionId = book.progressSessionId;
+    }
+    if (typeof book.progressUpdatedAt === "number" && Number.isFinite(book.progressUpdatedAt)) {
+      metaRecord.progressUpdatedAt = book.progressUpdatedAt;
+    }
+    return metaRecord;
+  }
+
+  function syncBookCachesAfterCommit(record, options = {}) {
+    if (!record || !record.id) return;
+    registerBookDiskRevision(record);
+
+    const forceSyncProgress = Boolean(options.forceSyncProgress);
+    const preserveNewerInMemoryProgress = Boolean(options.preserveNewerInMemoryProgress);
+
+    const mergeIntoTarget = (target) => {
+      if (!target || target.id !== record.id) return;
+      const preservedChapters = target.chapters;
+      const preservedFootnotes = target.footnotes;
+      const prevProg = {
+        currentChapter: target.currentChapter,
+        chapterScrollRatio: target.chapterScrollRatio,
+        chapterAnchor: target.chapterAnchor,
+        hasStartedReading: target.hasStartedReading,
+        progressRevision: target.progressRevision,
+        progressSeq: target.progressSeq,
+        progressSessionId: target.progressSessionId,
+        progressUpdatedAt: target.progressUpdatedAt
+      };
+      Object.assign(target, record);
+      if (record.group === undefined) delete target.group;
+      if (record.groups === undefined) delete target.groups;
+      if (record.chapterWordCounts === undefined) delete target.chapterWordCounts;
+      if (preserveNewerInMemoryProgress && !forceSyncProgress) {
+        const memSeq = typeof prevProg.progressSeq === "number" ? prevProg.progressSeq : 0;
+        const recSeq = typeof record.progressSeq === "number" ? record.progressSeq : 0;
+        const memRev = typeof prevProg.progressRevision === "number" ? prevProg.progressRevision : 0;
+        const recRev = typeof record.progressRevision === "number" ? record.progressRevision : 0;
+        if (prevProg.progressSessionId === STORAGE_SESSION_ID && (memSeq > recSeq || memRev > recRev)) {
+          target.currentChapter = prevProg.currentChapter;
+          target.chapterScrollRatio = prevProg.chapterScrollRatio;
+          target.chapterAnchor = prevProg.chapterAnchor;
+          target.hasStartedReading = prevProg.hasStartedReading;
+          target.progressRevision = prevProg.progressRevision;
+          target.progressSeq = prevProg.progressSeq;
+          target.progressSessionId = prevProg.progressSessionId;
+          target.progressUpdatedAt = prevProg.progressUpdatedAt;
+        }
+      }
+      if (Array.isArray(preservedChapters) && preservedChapters.length > 0) {
+        target.chapters = preservedChapters;
+      }
+      if (preservedFootnotes) {
+        target.footnotes = preservedFootnotes;
+      }
+    };
 
     const booksList = hooks.getBooksList();
     if (Array.isArray(booksList)) {
-      const idx = booksList.findIndex(b => b.id === book.id);
+      const idx = booksList.findIndex(b => b && b.id === record.id);
       if (idx !== -1) {
-        booksList[idx] = { ...booksList[idx], ...metaRecord };
-        if (metaRecord.group === undefined) delete booksList[idx].group;
-        if (metaRecord.groups === undefined) delete booksList[idx].groups;
+        mergeIntoTarget(booksList[idx]);
       } else {
-        booksList.push(metaRecord);
+        booksList.push({ ...record });
       }
     }
 
     const currentBook = hooks.getCurrentBook();
-    if (currentBook && currentBook.id === book.id && currentBook !== book) {
-      const preservedChapters = currentBook.chapters;
-      const preservedFootnotes = currentBook.footnotes;
-      Object.assign(currentBook, metaRecord);
-      if (metaRecord.group === undefined) delete currentBook.group;
-      if (metaRecord.groups === undefined) delete currentBook.groups;
-      if (Array.isArray(preservedChapters) && preservedChapters.length > 0) {
-        currentBook.chapters = preservedChapters;
+    if (currentBook && currentBook.id === record.id) {
+      mergeIntoTarget(currentBook);
+    }
+  }
+
+  function enqueueBookWrite(bookId, taskFn) {
+    const prevTail = bookWriteQueues.get(bookId) || Promise.resolve();
+    const taskPromise = prevTail
+      .catch(() => {}) // Aísla fallos anteriores para no bloquear futuras escrituras del mismo libro
+      .then(() => taskFn());
+
+    const safeTail = taskPromise.catch(() => {}).finally(() => {
+      if (bookWriteQueues.get(bookId) === safeTail) {
+        bookWriteQueues.delete(bookId);
       }
-      if (preservedFootnotes) {
-        currentBook.footnotes = preservedFootnotes;
+    });
+    bookWriteQueues.set(bookId, safeTail);
+    return taskPromise;
+  }
+
+  /**
+   * Ejecuta lectura (store.get), fusión estrictamente síncrona (mergeFn) y escritura (store.put)
+   * dentro de la MISMA transacción readwrite en IndexedDB.
+   * Garantiza distinguir transacción completada sin put() ("skipped: true, persistedToIdb: false")
+   * frente a escritura realmente confirmada mediante store.put() + tx.oncomplete ("persistedToIdb: true").
+   */
+  async function dbUpdateBookInTransaction(bookId, mergeFn, options = {}) {
+    if (!bookId || typeof mergeFn !== "function") {
+      return {
+        ok: false,
+        persistedToIdb: false,
+        persistedToMemory: false,
+        writtenToIdb: false,
+        skipped: false,
+        reason: "invalid-args",
+        record: null
+      };
+    }
+
+    return enqueueBookWrite(bookId, async () => {
+      if (deletedBookIdsInSession.has(bookId) && !options.allowCreate) {
+        return {
+          ok: true,
+          persistedToIdb: false,
+          persistedToMemory: false,
+          writtenToIdb: false,
+          skipped: true,
+          reason: "deleted-in-session",
+          record: null
+        };
+      }
+
+      let conn = await ensureDb();
+      if (!conn) {
+        // Fallback temporal en RAM (nunca confirma persistedToIdb)
+        const list = inMemoryDb.books || [];
+        const existingMem = list.find(x => x && x.id === bookId) || null;
+        let decision;
+        try {
+          decision = mergeFn(existingMem ? { ...existingMem } : null);
+        } catch (err) {
+          return {
+            ok: false,
+            persistedToIdb: false,
+            persistedToMemory: false,
+            writtenToIdb: false,
+            skipped: false,
+            reason: "merge-error",
+            error: err,
+            record: null
+          };
+        }
+        if (!decision || decision.skip) {
+          return {
+            ok: true,
+            persistedToIdb: false,
+            persistedToMemory: false,
+            writtenToIdb: false,
+            skipped: true,
+            reason: (decision && decision.reason) || "skipped",
+            record: (decision && decision.record) || existingMem
+          };
+        }
+        if (decision.record) {
+          putInMemoryStore("books", decision.record);
+          syncBookCachesAfterCommit(decision.record, options);
+        }
+        return {
+          ok: true,
+          persistedToIdb: false,
+          persistedToMemory: true,
+          writtenToIdb: false,
+          skipped: false,
+          reason: "memory-fallback",
+          record: decision.record || null
+        };
+      }
+
+      const runTx = (targetConn) => new Promise((resolve) => {
+        let settled = false;
+        let didPut = false;
+        let skipReason = null;
+        let finalRecord = null;
+        let mergeError = null;
+
+        const finish = (res) => {
+          if (settled) return;
+          settled = true;
+          resolve(res);
+        };
+
+        try {
+          const tx = targetConn.transaction("books", "readwrite");
+          const store = tx.objectStore("books");
+          const getReq = store.get(bookId);
+
+          getReq.onsuccess = () => {
+            const diskRecord = getReq.result || null;
+            let decision;
+            try {
+              // ESTRICTAMENTE SÍNCRONO dentro del callback onsuccess de store.get()
+              decision = mergeFn(diskRecord);
+            } catch (err) {
+              mergeError = err;
+              try { tx.abort(); } catch (abortErr) {}
+              return;
+            }
+
+            if (!decision || decision.skip || !decision.record) {
+              didPut = false;
+              skipReason = (decision && decision.reason) || "skipped";
+              finalRecord = (decision && decision.record) || diskRecord;
+              return;
+            }
+
+            didPut = true;
+            finalRecord = decision.record;
+            const putReq = store.put(finalRecord);
+            putReq.onerror = () => {
+              // Manejado por tx.onerror / tx.onabort
+            };
+          };
+
+          getReq.onerror = () => {
+            const err = getReq.error;
+            if (!settled) {
+              try { tx.abort(); } catch (abortErr) {}
+              finish({
+                ok: false,
+                persistedToIdb: false,
+                persistedToMemory: false,
+                writtenToIdb: false,
+                skipped: false,
+                aborted: true,
+                retryableInvalidState: handleTransactionFailureAndMaybeReset(targetConn, err),
+                error: err,
+                record: null
+              });
+            }
+          };
+
+          tx.oncomplete = () => {
+            if (!didPut) {
+              finish({
+                ok: true,
+                persistedToIdb: false,
+                persistedToMemory: false,
+                writtenToIdb: false,
+                skipped: true,
+                reason: skipReason || "skipped",
+                record: finalRecord
+              });
+              return;
+            }
+            if (finalRecord) {
+              putInMemoryStore("books", finalRecord);
+              syncBookCachesAfterCommit(finalRecord, options);
+            }
+            finish({
+              ok: true,
+              persistedToIdb: true,
+              persistedToMemory: false,
+              writtenToIdb: true,
+              skipped: false,
+              reason: null,
+              record: finalRecord
+            });
+          };
+
+          tx.onerror = (ev) => {
+            const err = mergeError || tx.error || ev?.target?.error;
+            if (isQuotaError(err)) notifyQuotaExceeded();
+            const retryable = handleTransactionFailureAndMaybeReset(targetConn, err);
+            finish({
+              ok: false,
+              persistedToIdb: false,
+              persistedToMemory: false,
+              writtenToIdb: false,
+              skipped: false,
+              aborted: true,
+              quotaExceeded: isQuotaError(err),
+              retryableInvalidState: retryable,
+              error: err,
+              record: null
+            });
+          };
+
+          tx.onabort = () => {
+            const err = mergeError || tx.error;
+            if (isQuotaError(err)) notifyQuotaExceeded();
+            const retryable = handleTransactionFailureAndMaybeReset(targetConn, err);
+            finish({
+              ok: false,
+              persistedToIdb: false,
+              persistedToMemory: false,
+              writtenToIdb: false,
+              skipped: false,
+              aborted: true,
+              quotaExceeded: isQuotaError(err),
+              retryableInvalidState: retryable,
+              error: err,
+              record: null
+            });
+          };
+        } catch (err) {
+          const retryable = handleTransactionFailureAndMaybeReset(targetConn, err);
+          finish({
+            ok: false,
+            persistedToIdb: false,
+            persistedToMemory: false,
+            writtenToIdb: false,
+            skipped: false,
+            aborted: false,
+            quotaExceeded: isQuotaError(err),
+            retryableInvalidState: retryable,
+            error: err,
+            record: null
+          });
+        }
+      });
+
+      let res = await runTx(conn);
+      if (!res.ok && res.retryableInvalidState) {
+        resetRetryCooldown();
+        conn = await ensureDb();
+        if (conn) {
+          res = await runTx(conn);
+        }
+      }
+      return res;
+    });
+  }
+
+  function nextBookProgressSeq(bookId, minFloor = 0) {
+    const prev = bookSeqCounters.get(bookId) || 0;
+    const next = Math.max(prev, minFloor) + 1;
+    bookSeqCounters.set(bookId, next);
+    return next;
+  }
+
+  /**
+   * Actualización secundaria estrictamente parcial: fusiona únicamente los campos provistos
+   * sobre el registro real leído dentro de la transacción, sin tocar progreso de lectura.
+   */
+  async function saveBookPatch(bookId, patch, options = {}) {
+    if (!bookId || !patch || typeof patch !== "object") {
+      return { ok: false, persistedToIdb: false, persistedToMemory: false, writtenToIdb: false, skipped: false };
+    }
+    const cleanPatch = { ...patch };
+    for (let i = 0; i < PROGRESS_FIELDS.length; i++) {
+      delete cleanPatch[PROGRESS_FIELDS[i]];
+    }
+
+    return dbUpdateBookInTransaction(
+      bookId,
+      (diskRecord) => {
+        const base = diskRecord
+          ? { ...diskRecord }
+          : (options.fallbackBook ? buildMetaRecord(options.fallbackBook) : null);
+        if (!base) {
+          return { skip: true, reason: "missing-book" };
+        }
+        const entries = Object.entries(cleanPatch);
+        for (let i = 0; i < entries.length; i++) {
+          const k = entries[i][0];
+          const v = entries[i][1];
+          if (k === "rating") {
+            base.rating = sanitizeRatingValue(v);
+          } else if (v === undefined) {
+            delete base[k];
+          } else {
+            base[k] = v;
+          }
+        }
+        if (Array.isArray(base.groups) && base.groups.length > 0) {
+          base.group = base.groups[0];
+        } else if (Object.prototype.hasOwnProperty.call(cleanPatch, "groups") && !(Array.isArray(cleanPatch.groups) && cleanPatch.groups.length > 0)) {
+          delete base.groups;
+          delete base.group;
+        }
+        return { skip: false, record: base };
+      },
+      {
+        allowCreate: Boolean(options.fallbackBook),
+        preserveNewerInMemoryProgress: true,
+        forceSyncProgress: false
+      }
+    );
+  }
+
+  /**
+   * Actualización de progreso de lectura con guarda optimista multi-pestaña (progressRevision)
+   * y conservación de parches pendientes en pendingRecoveryProgressPatches si IDB no está disponible.
+   */
+  async function saveBookProgressPatch(bookId, progressPatch, options = {}) {
+    if (!bookId || !progressPatch || typeof progressPatch !== "object") {
+      return { ok: false, persistedToIdb: false, persistedToMemory: false, writtenToIdb: false, skipped: false };
+    }
+
+    const baseRevisionKnown = options.baseRevisionKnown !== undefined
+      ? Boolean(options.baseRevisionKnown)
+      : knownDiskRevisionByBook.has(bookId);
+    const expectedBaseRevision = baseRevisionKnown
+      ? (options.expectedBaseRevision !== undefined ? options.expectedBaseRevision : knownDiskRevisionByBook.get(bookId))
+      : null;
+
+    const incomingSeq = typeof progressPatch.progressSeq === "number"
+      ? progressPatch.progressSeq
+      : nextBookProgressSeq(bookId);
+    const incomingTs = typeof progressPatch.progressUpdatedAt === "number"
+      ? progressPatch.progressUpdatedAt
+      : nextMonotonicProgressTimestamp();
+    const isRecoveryDrain = Boolean(options.isRecoveryDrain);
+
+    const preparedPatch = {
+      currentChapter: typeof progressPatch.currentChapter === "number" ? progressPatch.currentChapter : undefined,
+      chapterScrollRatio: typeof progressPatch.chapterScrollRatio === "number" ? progressPatch.chapterScrollRatio : undefined,
+      chapterAnchor: progressPatch.chapterAnchor !== undefined ? progressPatch.chapterAnchor : undefined,
+      hasStartedReading: progressPatch.hasStartedReading !== undefined ? Boolean(progressPatch.hasStartedReading) : undefined,
+      lastOpenedAt: typeof progressPatch.lastOpenedAt === "number" ? progressPatch.lastOpenedAt : undefined,
+      progressSeq: incomingSeq,
+      progressSessionId: progressPatch.progressSessionId || STORAGE_SESSION_ID,
+      progressUpdatedAt: incomingTs,
+      expectedBaseRevision,
+      baseRevisionKnown,
+      explicitUserChapterSwitch: Boolean(options.explicitUserChapterSwitch)
+    };
+
+    const res = await dbUpdateBookInTransaction(
+      bookId,
+      (diskRecord) => {
+        if (!diskRecord) {
+          if (isRecoveryDrain || !options.fallbackBook) {
+            return { skip: true, reason: isRecoveryDrain ? "recovery-missing-book" : "missing-book" };
+          }
+        }
+
+        const base = diskRecord ? { ...diskRecord } : buildMetaRecord(options.fallbackBook);
+        const diskRev = typeof base.progressRevision === "number" && Number.isFinite(base.progressRevision)
+          ? base.progressRevision
+          : 0;
+        const diskSeq = typeof base.progressSeq === "number" && Number.isFinite(base.progressSeq)
+          ? base.progressSeq
+          : 0;
+        const diskSess = base.progressSessionId || null;
+
+        if (isRecoveryDrain) {
+          if (!preparedPatch.baseRevisionKnown) {
+            const hasDiskProgress = Boolean(
+              base.hasStartedReading ||
+              (base.currentChapter || 0) > 0 ||
+              (base.chapterScrollRatio || 0) > 0 ||
+              diskRev > 0
+            );
+            if (hasDiskProgress) {
+              return { skip: true, reason: "recovery-disk-has-progress", record: base };
+            }
+          } else {
+            if (diskSess && diskSess !== STORAGE_SESSION_ID && diskRev > (preparedPatch.expectedBaseRevision || 0)) {
+              return { skip: true, reason: "external-revision-conflict", record: base };
+            }
+            if (diskSess === STORAGE_SESSION_ID && diskSeq >= preparedPatch.progressSeq) {
+              return { skip: true, reason: "stale-in-session", record: base };
+            }
+          }
+        } else if (diskRecord) {
+          if (
+            diskSess &&
+            diskSess !== STORAGE_SESSION_ID &&
+            preparedPatch.baseRevisionKnown &&
+            diskRev > (preparedPatch.expectedBaseRevision || 0)
+          ) {
+            return { skip: true, reason: "external-revision-conflict", record: base };
+          }
+          if (diskSess === STORAGE_SESSION_ID && diskSeq >= preparedPatch.progressSeq) {
+            return { skip: true, reason: "stale-in-session", record: base };
+          }
+        }
+
+        if (preparedPatch.currentChapter !== undefined) base.currentChapter = preparedPatch.currentChapter;
+        if (preparedPatch.chapterScrollRatio !== undefined) base.chapterScrollRatio = preparedPatch.chapterScrollRatio;
+        if (preparedPatch.chapterAnchor !== undefined) base.chapterAnchor = preparedPatch.chapterAnchor;
+        if (preparedPatch.hasStartedReading !== undefined) base.hasStartedReading = preparedPatch.hasStartedReading;
+        if (preparedPatch.lastOpenedAt !== undefined) {
+          base.lastOpenedAt = Math.max(base.lastOpenedAt || 0, preparedPatch.lastOpenedAt);
+        }
+
+        const nextRev = Math.max(diskRev, preparedPatch.expectedBaseRevision || 0) + 1;
+        base.progressRevision = nextRev;
+        base.progressSeq = preparedPatch.progressSeq;
+        base.progressSessionId = preparedPatch.progressSessionId;
+        base.progressUpdatedAt = preparedPatch.progressUpdatedAt;
+
+        return { skip: false, record: base };
+      },
+      {
+        allowCreate: Boolean(options.fallbackBook && !isRecoveryDrain),
+        forceSyncProgress: true,
+        isProgressWrite: true
+      }
+    );
+
+    if (res.skipped && res.reason === "external-revision-conflict" && res.record) {
+      syncBookCachesAfterCommit(res.record, { forceSyncProgress: true });
+      if (typeof hooks.onExternalProgressConflict === "function") {
+        try {
+          hooks.onExternalProgressConflict({
+            bookId,
+            diskRecord: res.record,
+            attemptedPatch: preparedPatch
+          });
+        } catch (e) {}
+      }
+    } else if (res.skipped && res.reason === "recovery-disk-has-progress" && res.record) {
+      syncBookCachesAfterCommit(res.record, { forceSyncProgress: true });
+    }
+
+    // Si falló IDB o cayó a RAM temporal (y no es ya un drenado conflictivo/descartado), conservar en pendingRecoveryProgressPatches
+    if (!res.persistedToIdb && !res.skipped && !isRecoveryDrain) {
+      const existingPending = pendingRecoveryProgressPatches.get(bookId);
+      if (!existingPending || preparedPatch.progressSeq >= existingPending.progressSeq) {
+        pendingRecoveryProgressPatches.set(bookId, preparedPatch);
+      }
+    } else if (res.persistedToIdb && isRecoveryDrain) {
+      pendingRecoveryProgressPatches.delete(bookId);
+    } else if (res.skipped && isRecoveryDrain) {
+      pendingRecoveryProgressPatches.delete(bookId);
+    } else if (res.persistedToIdb && !isRecoveryDrain) {
+      const curPending = pendingRecoveryProgressPatches.get(bookId);
+      if (curPending && curPending.progressSeq <= preparedPatch.progressSeq) {
+        pendingRecoveryProgressPatches.delete(bookId);
       }
     }
-    return await dbSave("books", metaRecord);
+
+    return res;
+  }
+
+  async function drainPendingRecoveryProgressPatches() {
+    if (!db || pendingRecoveryProgressPatches.size === 0) return [];
+    const entries = Array.from(pendingRecoveryProgressPatches.entries());
+    const results = [];
+    for (let i = 0; i < entries.length; i++) {
+      const bookId = entries[i][0];
+      const patch = entries[i][1];
+      if (!patch) {
+        pendingRecoveryProgressPatches.delete(bookId);
+        continue;
+      }
+      const res = await saveBookProgressPatch(bookId, patch, {
+        isRecoveryDrain: true,
+        baseRevisionKnown: patch.baseRevisionKnown,
+        expectedBaseRevision: patch.expectedBaseRevision
+      });
+      results.push({ bookId, res });
+      if (typeof hooks.onRecoverySync === "function") {
+        try {
+          hooks.onRecoverySync({ bookId, res });
+        } catch (e) {}
+      }
+    }
+    return results;
+  }
+
+  async function saveBookMeta(book, options = {}) {
+    if (!book || !book.id) return false;
+
+    if (Array.isArray(options.fields) && options.fields.length > 0) {
+      const fullRec = buildMetaRecord(book);
+      const patch = {};
+      for (let i = 0; i < options.fields.length; i++) {
+        const key = options.fields[i];
+        patch[key] = fullRec[key];
+      }
+      const res = await saveBookPatch(book.id, patch, { fallbackBook: book });
+      return Boolean(res.ok);
+    }
+
+    const allowProgressOverwrite = Boolean(options.allowProgressOverwrite || options.kind === "full" || options.kind === "backup_merge");
+    const fullRec = buildMetaRecord(book);
+    if (allowProgressOverwrite) {
+      deletedBookIdsInSession.delete(book.id);
+    }
+
+    const expectedBase = knownDiskRevisionByBook.has(book.id) ? knownDiskRevisionByBook.get(book.id) : null;
+    const seq = nextBookProgressSeq(book.id);
+    const ts = nextMonotonicProgressTimestamp();
+
+    const res = await dbUpdateBookInTransaction(
+      book.id,
+      (diskRecord) => {
+        if (!diskRecord) {
+          fullRec.progressRevision = 1;
+          fullRec.progressSeq = seq;
+          fullRec.progressSessionId = STORAGE_SESSION_ID;
+          fullRec.progressUpdatedAt = ts;
+          return { skip: false, record: fullRec };
+        }
+
+        const diskRev = typeof diskRecord.progressRevision === "number" ? diskRecord.progressRevision : 0;
+        const merged = { ...diskRecord, ...fullRec };
+        if (fullRec.group === undefined) delete merged.group;
+        if (fullRec.groups === undefined) delete merged.groups;
+        if (fullRec.chapterWordCounts === undefined) {
+          if (diskRecord.chapterWordCounts !== undefined) merged.chapterWordCounts = diskRecord.chapterWordCounts;
+          else delete merged.chapterWordCounts;
+        }
+
+        if (!allowProgressOverwrite) {
+          const isDiskNewerOrEqual = (
+            diskRecord.progressSessionId &&
+            diskRecord.progressSessionId !== STORAGE_SESSION_ID &&
+            (expectedBase === null || diskRev > expectedBase)
+          ) || (
+            diskRecord.progressSessionId === STORAGE_SESSION_ID &&
+            (diskRecord.progressSeq || 0) >= (book.progressSeq || 0)
+          );
+          if (isDiskNewerOrEqual) {
+            merged.currentChapter = diskRecord.currentChapter;
+            merged.chapterScrollRatio = diskRecord.chapterScrollRatio;
+            merged.chapterAnchor = diskRecord.chapterAnchor;
+            merged.hasStartedReading = diskRecord.hasStartedReading;
+            merged.progressRevision = diskRecord.progressRevision;
+            merged.progressSeq = diskRecord.progressSeq;
+            merged.progressSessionId = diskRecord.progressSessionId;
+            merged.progressUpdatedAt = diskRecord.progressUpdatedAt;
+            return { skip: false, record: merged };
+          }
+        }
+
+        merged.progressRevision = Math.max(diskRev, expectedBase || 0) + 1;
+        merged.progressSeq = seq;
+        merged.progressSessionId = STORAGE_SESSION_ID;
+        merged.progressUpdatedAt = ts;
+        return { skip: false, record: merged };
+      },
+      {
+        allowCreate: true,
+        forceSyncProgress: allowProgressOverwrite,
+        preserveNewerInMemoryProgress: !allowProgressOverwrite
+      }
+    );
+    return Boolean(res.ok);
   }
 
   async function saveFullBookToDb(bookData, assetBlobs = []) {
     if (!bookData || !bookData.id) return false;
+    deletedBookIdsInSession.delete(bookData.id);
     const removeFromBooksList = (bookId) => {
       const list = hooks.getBooksList();
       if (Array.isArray(list)) {
@@ -680,7 +1539,7 @@
       return false;
     }
 
-    const metaSaved = await saveBookMeta(bookData);
+    const metaSaved = await saveBookMeta(bookData, { allowProgressOverwrite: true, kind: "full" });
     if (!metaSaved) {
       await deleteBookAndAssets(bookData.id).catch(() => {});
       removeFromBooksList(bookData.id);
@@ -757,6 +1616,14 @@
   }
 
   async function deleteBookAndAssets(bookId) {
+    deletedBookIdsInSession.add(bookId);
+    pendingRecoveryProgressPatches.delete(bookId);
+    knownDiskRevisionByBook.delete(bookId);
+    bookSeqCounters.delete(bookId);
+    const tail = bookWriteQueues.get(bookId);
+    if (tail) {
+      await tail.catch(() => {});
+    }
     revokeBookObjectUrls(`${bookId}::`);
     if (typeof hooks.onRevokeCover === "function") {
       try { hooks.onRevokeCover(bookId); } catch (e) {}
@@ -830,9 +1697,16 @@
     raw: {
       openDatabase,
       ensureDb,
+      resetRetryCooldown,
       isUsingTempMemoryStorage,
       isBlocked,
       hasDatabase,
+      getSessionId,
+      getKnownDiskRevision: (bookId) => (knownDiskRevisionByBook.has(bookId) ? knownDiskRevisionByBook.get(bookId) : null),
+      getPendingRecoveryPatchesCount: () => pendingRecoveryProgressPatches.size,
+      hasPendingRecoveryPatch: (bookId) => pendingRecoveryProgressPatches.has(bookId),
+      drainPendingRecoveryProgressPatches,
+      dbUpdateBookInTransaction,
       requestPersistentStorage,
       dbSave,
       dbGet,
@@ -847,6 +1721,8 @@
     books: {
       getAllMeta: () => dbGetAll("books"),
       saveMeta: saveBookMeta,
+      savePatch: saveBookPatch,
+      saveProgressPatch: saveBookProgressPatch,
       saveFull: saveFullBookToDb,
       ensureHydrated: ensureBookHydrated,
       releaseHeavyMemory: releaseBookHeavyMemory,
