@@ -2,6 +2,7 @@ import { createRoot } from 'react-dom/client';
 import { registerSW } from 'virtual:pwa-register';
 import App from './App.tsx';
 import './index.css';
+import { swUpdateCoordinator } from './swUpdateCoordinator';
 
 if (import.meta.env.DEV) {
   if ('serviceWorker' in navigator) {
@@ -19,17 +20,22 @@ if (import.meta.env.DEV) {
     }).catch(() => {});
   }
 } else {
-  const hadController = Boolean('serviceWorker' in navigator && navigator.serviceWorker.controller);
-  let reloadedForSw = false;
-  if ('serviceWorker' in navigator && hadController) {
-    navigator.serviceWorker.addEventListener('controllerchange', () => {
-      if (reloadedForSw) return;
-      reloadedForSw = true;
-      window.location.reload();
+  swUpdateCoordinator.start(() => {
+    registerSW({
+      immediate: true,
+      onNeedRefresh() {
+        swUpdateCoordinator.notifyWaitingUpdate();
+      },
+      onNeedReload() {
+        // Reload gestionado exclusivamente por swUpdateCoordinator tras commit en IndexedDB y controlador activado.
+      },
+      onRegisteredSW(_swUrl, registration) {
+        swUpdateCoordinator.attachRegistration(registration);
+      },
+      onRegisterError(err) {
+        swUpdateCoordinator.handleRegistrationError(err);
+      },
     });
-  }
-  registerSW({
-    immediate: true,
   });
 }
 

@@ -106,7 +106,7 @@ export default defineConfig(() => {
       tailwindcss(),
       nyxenStandaloneDownloadPlugin(),
       VitePWA({
-        registerType: 'autoUpdate',
+        registerType: 'prompt',
         includeAssets: [],
         manifest: {
           id: '/',
@@ -149,29 +149,13 @@ export default defineConfig(() => {
         workbox: {
           cleanupOutdatedCaches: true,
           clientsClaim: true,
-          skipWaiting: true,
           globPatterns: ['**/*.{js,css,html,ico,png,svg,woff,woff2,webmanifest}'],
-          globIgnores: ['assets/aistudio/**', 'Nyxen_EPUB_Reader.html'],
-          ignoreURLParametersMatching: [/^utm_/, /^fbclid$/],
+          globIgnores: ['assets/aistudio/**', '__download/**'],
+          ignoreURLParametersMatching: [/^utm_/, /^fbclid$/, /^v$/],
           navigateFallback: '/index.html',
           navigateFallbackDenylist: [/^\/Nyxen_EPUB_Reader\.html/, /^\/__download\//],
           maximumFileSizeToCacheInBytes: 5 * 1024 * 1024,
           runtimeCaching: [
-            {
-              urlPattern: ({url}) => url.pathname === '/Nyxen_EPUB_Reader.html',
-              handler: 'NetworkFirst',
-              options: {
-                cacheName: 'nyxen-reader-html-cache',
-                networkTimeoutSeconds: 2,
-                expiration: {
-                  maxEntries: 3,
-                  maxAgeSeconds: 60 * 60 * 24 * 30,
-                },
-                cacheableResponse: {
-                  statuses: [0, 200],
-                },
-              },
-            },
             {
               urlPattern: /^https:\/\/fonts\.googleapis\.com\/.*/i,
               handler: 'CacheFirst',

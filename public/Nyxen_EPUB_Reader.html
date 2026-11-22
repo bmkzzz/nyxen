@@ -5739,6 +5739,725 @@ https://github.com/nodeca/pako/blob/main/LICENSE
     const deleteBookAndAssets = window.NyxenStorage.books.deleteWithAssets;
 
     /* -------------------------------------------------------------
+       2B. COORDINADOR SUBFASE 3C (ACTUALIZACIÓN SEGURA DE SERVICE WORKER)
+    ------------------------------------------------------------- */
+    const SW_IDLE_SAFE_WINDOW_MS = 1500;
+    const SW_WATCHDOG_PRE_IRREV_MS = 1500;
+    const SW_WATCHDOG_STATUS_GRACE_MS = 400;
+    const SW_WATCHDOG_IRREV_STALL_MS = 5000;
+    const SW_LOCK_TOAST_COOLDOWN_MS = 1500;
+
+    const SW_BLOCKING_OVERLAY_IDS = [
+      "libViewMenuOverlay", "libViewMenuPopover",
+      "readestMenuOverlay", "readestMenuPopover",
+      "librarySearchOverlay", "editMetadataModal",
+      "uiSettingsModal", "aboutModal", "clearConfirmModal",
+      "bookContextMenuModal", "groupBookModal", "deleteSingleBookModal",
+      "dictionaryOverlay", "noteModal", "externalLinkModal",
+      "foliateDrawer", "panelTypography",
+      "proColorPickerModal", "themeEditorModal", "themeActionMenuModal",
+      "quoteCardModal", "loadingOverlay"
+    ];
+
+    const SW_CAPTURED_EVENTS = [
+      "click", "submit",
+      "pointerdown", "pointerup", "pointermove", "pointercancel",
+      "mousedown", "mouseup",
+      "touchstart", "touchmove", "touchend", "touchcancel",
+      "beforeinput", "input", "change", "contextmenu",
+      "keydown", "keypress", "keyup",
+      "wheel", "blur", "paste", "drop"
+    ];
+
+    const SW_DISCRETE_ACTION_EVENTS = new Set([
+      "click", "submit", "pointerdown", "mousedown", "touchstart",
+      "keydown", "beforeinput", "input", "change", "paste", "drop", "contextmenu"
+    ]);
+
+    let swUpdateState = "IDLE"; // 'IDLE' | 'DRAINING' | 'ARMED' | 'COMMITTED_PRE_SKIP' | 'COMMITTED_DISPATCH_PENDING' | 'COMMITTED_IRREVERSIBLE' | 'RECOVERY_PROTECTED'
+    let swActiveCycle = null;
+    const swIrreversibleTokens = new Set();
+    let swActiveCriticalOps = 0;
+    let swLastUserActivityAt = Date.now();
+    let swLastSafeWindowValue = null;
+    let swSafeIdleTimer = null;
+    let swPreIrrevWatchdogTimer = null;
+    let swStatusGraceTimer = null;
+    let swIrrevStallWatchdogTimer = null;
+    let swLastLockToastAt = 0;
+    let swBridgeReady = false;
+
+    function getStorageLifecycle() {
+      return window.NyxenStorage && window.NyxenStorage.lifecycle ? window.NyxenStorage.lifecycle : null;
+    }
+
+    function isSwCommitLocked() {
+      const lc = getStorageLifecycle();
+      return Boolean(
+        swUpdateState === "COMMITTED_PRE_SKIP" ||
+        swUpdateState === "COMMITTED_DISPATCH_PENDING" ||
+        swUpdateState === "COMMITTED_IRREVERSIBLE" ||
+        swUpdateState === "RECOVERY_PROTECTED" ||
+        (lc && typeof lc.isCommitHoldActive === "function" && lc.isCommitHoldActive())
+      );
+    }
+
+    function isSwIrreversibleOrRecoveryState() {
+      return (
+        swUpdateState === "COMMITTED_IRREVERSIBLE" ||
+        swUpdateState === "RECOVERY_PROTECTED" ||
+        (swActiveCycle && swIrreversibleTokens.has(swActiveCycle.token))
+      );
+    }
+
+    function showSwCommitLockToast() {
+      const now = Date.now();
+      if (now - swLastLockToastAt < SW_LOCK_TOAST_COOLDOWN_MS) return;
+      swLastLockToastAt = now;
+      if (typeof showToast === "function") {
+        const isEs = typeof currentLang === "undefined" || currentLang === "es";
+        showToast(
+          isEs ? "Actualizando aplicación, recargando..." : "Updating app, reloading...",
+          1600
+        );
+      }
+    }
+
+    function postToSwParent(payload) {
+      if (!payload || typeof payload !== "object") return false;
+      try {
+        if (window.parent && window.parent !== window && window.location.origin && window.location.origin !== "null") {
+          window.parent.postMessage(payload, window.location.origin);
+          return true;
+        }
+      } catch (e) {}
+      return false;
+    }
+
+    function hasAnySwBlockingOverlayOpen() {
+      for (let i = 0; i < SW_BLOCKING_OVERLAY_IDS.length; i++) {
+        const el = document.getElementById(SW_BLOCKING_OVERLAY_IDS[i]);
+        if (el && !el.classList.contains("hidden")) {
+          return true;
+        }
+      }
+      return false;
+    }
+
+    function isSwSafeWindow() {
+      if (swUpdateState === "RECOVERY_PROTECTED") return false;
+      if (swActiveCriticalOps > 0) return false;
+      const lc = getStorageLifecycle();
+      if (lc && typeof lc.isQuiescent === "function" && !lc.isQuiescent()) return false;
+      if (document.visibilityState === "hidden") return true;
+
+      const viewLib = document.getElementById("viewLibrary");
+      const viewDetail = document.getElementById("viewStoryDetail");
+      const viewReader = document.getElementById("viewReader");
+      const isLibraryVisible = Boolean(
+        viewLib && !viewLib.classList.contains("hidden") &&
+        (!viewDetail || viewDetail.classList.contains("hidden")) &&
+        (!viewReader || viewReader.classList.contains("hidden"))
+      );
+      if (!isLibraryVisible) return false;
+      if (hasAnySwBlockingOverlayOpen()) return false;
+      if (typeof activeStabilizationSession !== "undefined" && activeStabilizationSession) return false;
+      if (typeof isRestoringScroll !== "undefined" && isRestoringScroll) return false;
+      if (typeof isSwitchingChapter !== "undefined" && isSwitchingChapter) return false;
+      if (typeof offlinePackDownloading !== "undefined" && (offlinePackDownloading.en || offlinePackDownloading.es)) return false;
+
+      if (Date.now() - swLastUserActivityAt < SW_IDLE_SAFE_WINDOW_MS) return false;
+      return true;
+    }
+
+    function emitSafeWindowStatusIfChanged(force = false) {
+      if (!swBridgeReady) return;
+      const current = isSwSafeWindow();
+      if (!force && current === swLastSafeWindowValue) return;
+      swLastSafeWindowValue = current;
+      postToSwParent({
+        type: "NYXEN_SW_SAFE_WINDOW_STATUS",
+        safeWindow: current,
+        lockState: swUpdateState
+      });
+    }
+
+    function scheduleSafeWindowEvaluation() {
+      if (swSafeIdleTimer) {
+        clearTimeout(swSafeIdleTimer);
+        swSafeIdleTimer = null;
+      }
+      emitSafeWindowStatusIfChanged(false);
+      if (!swBridgeReady || isSwCommitLocked()) return;
+      const elapsed = Date.now() - swLastUserActivityAt;
+      if (elapsed < SW_IDLE_SAFE_WINDOW_MS) {
+        const remaining = Math.max(20, SW_IDLE_SAFE_WINDOW_MS - elapsed + 10);
+        swSafeIdleTimer = setTimeout(() => {
+          swSafeIdleTimer = null;
+          emitSafeWindowStatusIfChanged(false);
+        }, remaining);
+      }
+    }
+
+    function clearSwWatchdogTimers() {
+      if (swPreIrrevWatchdogTimer) {
+        clearTimeout(swPreIrrevWatchdogTimer);
+        swPreIrrevWatchdogTimer = null;
+      }
+      if (swStatusGraceTimer) {
+        clearTimeout(swStatusGraceTimer);
+        swStatusGraceTimer = null;
+      }
+      if (swIrrevStallWatchdogTimer) {
+        clearTimeout(swIrrevStallWatchdogTimer);
+        swIrrevStallWatchdogTimer = null;
+      }
+    }
+
+    function nextSwIframeSeq(cycle) {
+      if (!cycle) return 1;
+      cycle.iframeSeq = (cycle.iframeSeq || 0) + 1;
+      return cycle.iframeSeq;
+    }
+
+    function invalidateSwPrepareCycle(reason) {
+      if (swUpdateState !== "DRAINING" && swUpdateState !== "ARMED") return false;
+      const cycle = swActiveCycle;
+      if (cycle) {
+        cycle.invalidated = true;
+        cycle.invalidatedReason = reason || "user-activity";
+        postToSwParent({
+          type: "NYXEN_SW_PREPARE_INVALIDATED",
+          token: cycle.token,
+          seq: nextSwIframeSeq(cycle),
+          reason: cycle.invalidatedReason
+        });
+      }
+      swActiveCycle = null;
+      swUpdateState = "IDLE";
+      scheduleSafeWindowEvaluation();
+      return true;
+    }
+
+    function beginSwCriticalOp(_opName) {
+      swActiveCriticalOps++;
+      const lc = getStorageLifecycle();
+      if (lc && typeof lc.bumpMutationEpoch === "function") {
+        lc.bumpMutationEpoch();
+      }
+      if (swUpdateState === "DRAINING" || swUpdateState === "ARMED") {
+        invalidateSwPrepareCycle("critical-op-started");
+      }
+      emitSafeWindowStatusIfChanged(false);
+    }
+
+    function endSwCriticalOp(_opName) {
+      swActiveCriticalOps = Math.max(0, swActiveCriticalOps - 1);
+      scheduleSafeWindowEvaluation();
+    }
+
+    function cancelAllPendingSwTimersAndObservers() {
+      try { if (typeof clearProgressTimers === "function") clearProgressTimers(); } catch (e) {}
+      try {
+        if (typeof scrollStableSnapshotTimer !== "undefined" && scrollStableSnapshotTimer) {
+          clearTimeout(scrollStableSnapshotTimer);
+          scrollStableSnapshotTimer = null;
+        }
+      } catch (e) {}
+      try {
+        if (typeof scrollFrameRaf !== "undefined" && scrollFrameRaf) {
+          cancelAnimationFrame(scrollFrameRaf);
+          scrollFrameRaf = 0;
+        }
+      } catch (e) {}
+      try {
+        if (typeof readerResizeDebounce !== "undefined" && readerResizeDebounce) {
+          clearTimeout(readerResizeDebounce);
+          readerResizeDebounce = null;
+        }
+      } catch (e) {}
+      try {
+        if (typeof selectionChangeDebounce !== "undefined" && selectionChangeDebounce) {
+          clearTimeout(selectionChangeDebounce);
+          selectionChangeDebounce = null;
+        }
+      } catch (e) {}
+      try {
+        if (typeof toolbarPointerReleaseTimer !== "undefined" && toolbarPointerReleaseTimer) {
+          clearTimeout(toolbarPointerReleaseTimer);
+          toolbarPointerReleaseTimer = null;
+        }
+      } catch (e) {}
+      try {
+        if (typeof detailReviewSaveTimer !== "undefined" && detailReviewSaveTimer) {
+          clearTimeout(detailReviewSaveTimer);
+          detailReviewSaveTimer = null;
+        }
+      } catch (e) {}
+      try {
+        if (typeof offlineHistoryFlushTimer !== "undefined" && offlineHistoryFlushTimer) {
+          clearTimeout(offlineHistoryFlushTimer);
+          offlineHistoryFlushTimer = null;
+        }
+      } catch (e) {}
+      try {
+        if (typeof readerConfigSaveTimer !== "undefined" && readerConfigSaveTimer) {
+          clearTimeout(readerConfigSaveTimer);
+          readerConfigSaveTimer = null;
+        }
+      } catch (e) {}
+      try {
+        if (typeof wordCountBackfillToken !== "undefined") {
+          wordCountBackfillToken++;
+        }
+      } catch (e) {}
+      try {
+        if (typeof cancelReaderLayoutStabilization === "function") {
+          cancelReaderLayoutStabilization({ resetStableState: false });
+        }
+      } catch (e) {}
+      try {
+        if (typeof clearPassiveLateAssetWatchers === "function") {
+          clearPassiveLateAssetWatchers();
+        }
+      } catch (e) {}
+    }
+
+    function enterSwRecoveryProtected(reason) {
+      clearSwWatchdogTimers();
+      const token = swActiveCycle ? swActiveCycle.token : null;
+      if (token) swIrreversibleTokens.add(token);
+      const lc = getStorageLifecycle();
+      if (lc && typeof lc.enterCommitHold === "function" && !lc.isCommitHoldActive()) {
+        lc.enterCommitHold({ token, reason: reason || "recovery-protected" });
+      }
+      swUpdateState = "RECOVERY_PROTECTED";
+      postToSwParent({
+        type: "NYXEN_SW_EMERGENCY_RECOVER",
+        token,
+        state: "RECOVERY_PROTECTED",
+        reason: reason || "recovery-protected"
+      });
+    }
+
+    function startSwPreIrrevWatchdog(cycle) {
+      clearSwWatchdogTimers();
+      swPreIrrevWatchdogTimer = setTimeout(() => {
+        swPreIrrevWatchdogTimer = null;
+        if (swActiveCycle !== cycle) return;
+        if (swUpdateState !== "COMMITTED_PRE_SKIP" && swUpdateState !== "COMMITTED_DISPATCH_PENDING") return;
+
+        postToSwParent({
+          type: "NYXEN_SW_STATUS_REPORT",
+          token: cycle.token,
+          seq: nextSwIframeSeq(cycle),
+          state: swUpdateState,
+          safeWindow: false,
+          watchdogPing: true
+        });
+
+        swStatusGraceTimer = setTimeout(() => {
+          swStatusGraceTimer = null;
+          if (swActiveCycle !== cycle) return;
+          if (swUpdateState === "COMMITTED_PRE_SKIP" || swUpdateState === "COMMITTED_DISPATCH_PENDING") {
+            enterSwRecoveryProtected("parent-commit-watchdog-timeout");
+          }
+        }, SW_WATCHDOG_STATUS_GRACE_MS);
+      }, SW_WATCHDOG_PRE_IRREV_MS);
+    }
+
+    function startSwIrrevStallWatchdog(cycle) {
+      clearSwWatchdogTimers();
+      swIrrevStallWatchdogTimer = setTimeout(() => {
+        swIrrevStallWatchdogTimer = null;
+        if (swActiveCycle !== cycle) return;
+        if (swUpdateState === "COMMITTED_IRREVERSIBLE") {
+          enterSwRecoveryProtected("activation-stall-timeout");
+        }
+      }, SW_WATCHDOG_IRREV_STALL_MS);
+    }
+
+    async function runSwPrepareCycle(cycle, externalControllerChange) {
+      const lc = getStorageLifecycle();
+      const flushTasks = [];
+      try {
+        if (typeof flushPendingReaderProgress === "function") {
+          flushTasks.push(Promise.resolve(flushPendingReaderProgress({ reason: "sw-prepare" })));
+        }
+      } catch (e) {}
+      try {
+        if (typeof flushPendingDetailReview === "function") {
+          flushTasks.push(Promise.resolve(flushPendingDetailReview()));
+        }
+      } catch (e) {}
+      try {
+        if (typeof flushOfflineHistoryCache === "function") {
+          flushTasks.push(Promise.resolve(flushOfflineHistoryCache()));
+        }
+      } catch (e) {}
+      try {
+        if (typeof readerConfigSaveTimer !== "undefined" && readerConfigSaveTimer) {
+          clearTimeout(readerConfigSaveTimer);
+          readerConfigSaveTimer = null;
+          flushTasks.push(Promise.resolve(dbSave("settings", { key: "readerConfig", val: readerConfig })));
+        }
+      } catch (e) {}
+
+      await Promise.allSettled(flushTasks);
+
+      if (swActiveCycle !== cycle || cycle.invalidated || swUpdateState !== "DRAINING") {
+        return;
+      }
+      if (swActiveCriticalOps > 0) {
+        swActiveCycle = null;
+        swUpdateState = "IDLE";
+        postToSwParent({
+          type: "NYXEN_SW_PREPARE_BUSY",
+          token: cycle.token,
+          seq: nextSwIframeSeq(cycle),
+          reason: "critical-op-during-drain"
+        });
+        scheduleSafeWindowEvaluation();
+        return;
+      }
+
+      if (lc && typeof lc.waitForQuiescence === "function") {
+        const qRes = await lc.waitForQuiescence({
+          timeoutMs: externalControllerChange ? 900 : 1100,
+          shouldAbort: () => swActiveCycle !== cycle || cycle.invalidated || swActiveCriticalOps > 0
+        });
+        if (swActiveCycle !== cycle || cycle.invalidated || swUpdateState !== "DRAINING") {
+          return;
+        }
+        if (!qRes.quiescent || swActiveCriticalOps > 0) {
+          swActiveCycle = null;
+          swUpdateState = "IDLE";
+          postToSwParent({
+            type: "NYXEN_SW_PREPARE_BUSY",
+            token: cycle.token,
+            seq: nextSwIframeSeq(cycle),
+            reason: qRes.aborted ? "aborted-during-quiescence" : "not-quiescent"
+          });
+          scheduleSafeWindowEvaluation();
+          return;
+        }
+      }
+
+      const safeNow = externalControllerChange ? true : isSwSafeWindow();
+      if (!externalControllerChange && !safeNow) {
+        swActiveCycle = null;
+        swUpdateState = "IDLE";
+        postToSwParent({
+          type: "NYXEN_SW_PREPARE_BUSY",
+          token: cycle.token,
+          seq: nextSwIframeSeq(cycle),
+          reason: "window-not-safe"
+        });
+        scheduleSafeWindowEvaluation();
+        return;
+      }
+
+      const epoch = lc && typeof lc.getMutationEpoch === "function" ? lc.getMutationEpoch() : 0;
+      cycle.armedEpoch = epoch;
+      swUpdateState = "ARMED";
+      postToSwParent({
+        type: "NYXEN_SW_PREPARE_ACK",
+        token: cycle.token,
+        seq: nextSwIframeSeq(cycle),
+        epoch,
+        safeWindow: safeNow
+      });
+    }
+
+    function isValidAbortProof(proof) {
+      if (!proof || typeof proof !== "object") return false;
+      if (proof.activeMatchesInitial !== true || proof.controllerMatchesInitial !== true) return false;
+      if (proof.waitingPresent === true) {
+        return proof.waitingState === "installed" && proof.waitingStillAttached === true;
+      }
+      if (proof.waitingPresent === false) {
+        return (
+          proof.waitingStillAttached === false &&
+          (proof.waitingState === null || proof.waitingState === "redundant")
+        );
+      }
+      return false;
+    }
+
+    function handleSwCoordinatorMessage(data) {
+      if (!data || typeof data !== "object" || typeof data.type !== "string") return false;
+      if (!data.type.startsWith("NYXEN_SW_")) return false;
+
+      const token = typeof data.token === "string" ? data.token : null;
+      const seq = typeof data.seq === "number" && Number.isFinite(data.seq) ? data.seq : null;
+
+      switch (data.type) {
+        case "NYXEN_SW_PREPARE_UPDATE": {
+          if (!token || seq === null) return true;
+          if (isSwCommitLocked() || isSwIrreversibleOrRecoveryState()) {
+            return true;
+          }
+          if (swActiveCriticalOps > 0) {
+            postToSwParent({
+              type: "NYXEN_SW_PREPARE_BUSY",
+              token,
+              seq: 1,
+              reason: "critical-op-active"
+            });
+            return true;
+          }
+          if (swActiveCycle && (swUpdateState === "DRAINING" || swUpdateState === "ARMED")) {
+            invalidateSwPrepareCycle("superseded-by-new-prepare");
+          }
+          const externalControllerChange = Boolean(data.externalControllerChange);
+          const cycle = {
+            token,
+            lastParentSeq: seq,
+            iframeSeq: 0,
+            externalControllerChange,
+            invalidated: false,
+            invalidatedReason: null,
+            armedEpoch: null
+          };
+          swActiveCycle = cycle;
+          swUpdateState = "DRAINING";
+          void runSwPrepareCycle(cycle, externalControllerChange);
+          return true;
+        }
+
+        case "NYXEN_SW_COMMIT_CHECK": {
+          if (!token || seq === null) return true;
+          const cycle = swActiveCycle;
+          const lc = getStorageLifecycle();
+          const currentEpoch = lc && typeof lc.getMutationEpoch === "function" ? lc.getMutationEpoch() : 0;
+          const isQuiescentNow = lc && typeof lc.isQuiescent === "function" ? lc.isQuiescent() : true;
+          const externalCtrl = Boolean(data.externalControllerChange || cycle?.externalControllerChange);
+
+          if (!cycle || cycle.token !== token || seq <= cycle.lastParentSeq) {
+            postToSwParent({
+              type: "NYXEN_SW_COMMIT_REJECTED",
+              token,
+              seq: cycle ? nextSwIframeSeq(cycle) : 1,
+              reason: "token-or-seq-mismatch"
+            });
+            return true;
+          }
+          cycle.lastParentSeq = seq;
+
+          if (swUpdateState !== "ARMED" || cycle.invalidated || swIrreversibleTokens.has(token)) {
+            swActiveCycle = null;
+            if (!isSwCommitLocked()) swUpdateState = "IDLE";
+            postToSwParent({
+              type: "NYXEN_SW_COMMIT_REJECTED",
+              token,
+              seq: nextSwIframeSeq(cycle),
+              reason: "not-armed"
+            });
+            return true;
+          }
+
+          const expectedEpoch = typeof data.expectedEpoch === "number" ? data.expectedEpoch : cycle.armedEpoch;
+          if (
+            swActiveCriticalOps > 0 ||
+            !isQuiescentNow ||
+            currentEpoch !== expectedEpoch ||
+            currentEpoch !== cycle.armedEpoch ||
+            (!externalCtrl && !isSwSafeWindow())
+          ) {
+            swActiveCycle = null;
+            swUpdateState = "IDLE";
+            postToSwParent({
+              type: "NYXEN_SW_COMMIT_REJECTED",
+              token,
+              seq: nextSwIframeSeq(cycle),
+              reason: swActiveCriticalOps > 0
+                ? "critical-op-active"
+                : (!isQuiescentNow || currentEpoch !== expectedEpoch ? "epoch-or-quiescence-changed" : "window-not-safe")
+            });
+            scheduleSafeWindowEvaluation();
+            return true;
+          }
+
+          // Paso atómico a COMMITTED_PRE_SKIP antes de responder
+          cancelAllPendingSwTimersAndObservers();
+          if (lc && typeof lc.enterCommitHold === "function") {
+            lc.enterCommitHold({
+              token,
+              reason: externalCtrl ? "external-controllerchange" : "sw-commit"
+            });
+          }
+          swUpdateState = "COMMITTED_PRE_SKIP";
+          startSwPreIrrevWatchdog(cycle);
+          postToSwParent({
+            type: "NYXEN_SW_COMMIT_CONFIRMED",
+            token,
+            seq: nextSwIframeSeq(cycle),
+            epoch: currentEpoch
+          });
+          return true;
+        }
+
+        case "NYXEN_SW_DISPATCH_PENDING": {
+          const cycle = swActiveCycle;
+          if (!cycle || !token || cycle.token !== token) return true;
+          if (seq === null || seq <= cycle.lastParentSeq) return true;
+          if (swIrreversibleTokens.has(token)) return true;
+          if (swUpdateState !== "COMMITTED_PRE_SKIP") return true;
+          cycle.lastParentSeq = seq;
+          swUpdateState = "COMMITTED_DISPATCH_PENDING";
+          return true;
+        }
+
+        case "NYXEN_SW_ACTIVATION_IRREVERSIBLE": {
+          const cycle = swActiveCycle;
+          if (!cycle || !token || cycle.token !== token) return true;
+          if (seq === null || seq <= cycle.lastParentSeq) return true;
+          if (
+            swUpdateState !== "COMMITTED_PRE_SKIP" &&
+            swUpdateState !== "COMMITTED_DISPATCH_PENDING" &&
+            swUpdateState !== "COMMITTED_IRREVERSIBLE"
+          ) {
+            return true;
+          }
+          cycle.lastParentSeq = seq;
+          swIrreversibleTokens.add(token);
+          swUpdateState = "COMMITTED_IRREVERSIBLE";
+          startSwIrrevStallWatchdog(cycle);
+          return true;
+        }
+
+        case "NYXEN_SW_ABORT_CONFIRMED": {
+          const cycle = swActiveCycle;
+          if (!cycle || !token || cycle.token !== token) return true;
+          if (seq === null || seq <= cycle.lastParentSeq) return true;
+          if (swIrreversibleTokens.has(token)) return true;
+          if (swUpdateState !== "COMMITTED_DISPATCH_PENDING") {
+            return true;
+          }
+          if (data.skipWaitingDispatched !== false || !isValidAbortProof(data.proof)) {
+            return true;
+          }
+
+          const lc = getStorageLifecycle();
+          if (lc && typeof lc.releaseCommitHold === "function") {
+            const relRes = lc.releaseCommitHold(token);
+            if (!relRes || !relRes.released) return true;
+          }
+
+          cycle.lastParentSeq = seq;
+          clearSwWatchdogTimers();
+          swActiveCycle = null;
+          swUpdateState = "IDLE";
+          scheduleSafeWindowEvaluation();
+          return true;
+        }
+
+        case "NYXEN_SW_CANCEL_UPDATE": {
+          const cycle = swActiveCycle;
+          if (!cycle || !token || cycle.token !== token) return true;
+          if (seq === null || seq <= cycle.lastParentSeq) return true;
+          if (
+            swIrreversibleTokens.has(token) ||
+            swUpdateState === "COMMITTED_PRE_SKIP" ||
+            swUpdateState === "COMMITTED_DISPATCH_PENDING" ||
+            swUpdateState === "COMMITTED_IRREVERSIBLE" ||
+            swUpdateState === "RECOVERY_PROTECTED"
+          ) {
+            // Nunca degradar ni liberar por CANCEL en estados comprometidos/irreversibles
+            return true;
+          }
+          cycle.lastParentSeq = seq;
+          cycle.invalidated = true;
+          cycle.invalidatedReason = String(data.reason || "parent-cancelled");
+          swActiveCycle = null;
+          swUpdateState = "IDLE";
+          scheduleSafeWindowEvaluation();
+          return true;
+        }
+
+        case "NYXEN_SW_STATUS_QUERY": {
+          const cycle = swActiveCycle;
+          postToSwParent({
+            type: "NYXEN_SW_STATUS_REPORT",
+            token: cycle ? cycle.token : token,
+            seq: cycle ? nextSwIframeSeq(cycle) : 1,
+            state: swUpdateState,
+            safeWindow: isSwSafeWindow()
+          });
+          return true;
+        }
+
+        case "NYXEN_SW_EXTERNAL_CONTROLLER_CHANGE": {
+          if (swUpdateState === "DRAINING" || swUpdateState === "ARMED") {
+            invalidateSwPrepareCycle("external-controllerchange");
+          }
+          return true;
+        }
+
+        default:
+          return false;
+      }
+    }
+
+    // Interceptor único en fase de captura sobre window
+    for (let i = 0; i < SW_CAPTURED_EVENTS.length; i++) {
+      const evtName = SW_CAPTURED_EVENTS[i];
+      window.addEventListener(evtName, (e) => {
+        if (isSwCommitLocked()) {
+          if (e && e.cancelable) {
+            try { e.preventDefault(); } catch (err) {}
+          }
+          if (e) {
+            try { e.stopImmediatePropagation(); } catch (err) {}
+            try { e.stopPropagation(); } catch (err) {}
+          }
+          if (SW_DISCRETE_ACTION_EVENTS.has(evtName)) {
+            showSwCommitLockToast();
+          }
+          return;
+        }
+
+        // Nunca bloquear acciones antes de COMMIT_CONFIRMED; solo registrar actividad / invalidar barrera
+        if (evtName === "pointermove" && e && typeof e.buttons === "number" && e.buttons === 0) {
+          return;
+        }
+        swLastUserActivityAt = Date.now();
+        if (swUpdateState === "DRAINING" || swUpdateState === "ARMED") {
+          invalidateSwPrepareCycle(`user-${evtName}`);
+        } else {
+          scheduleSafeWindowEvaluation();
+        }
+      }, { capture: true, passive: false });
+    }
+
+    window.addEventListener("message", (event) => {
+      if (!window.location.origin || window.location.origin === "null" || event.origin !== window.location.origin) return;
+      if (!window.parent || event.source !== window.parent) return;
+      handleSwCoordinatorMessage(event.data);
+    });
+
+    window.NyxenSwUpdateController = {
+      getState: () => swUpdateState,
+      getToken: () => (swActiveCycle ? swActiveCycle.token : null),
+      getCriticalOpsCount: () => swActiveCriticalOps,
+      isCommitLocked: () => isSwCommitLocked(),
+      isSafeWindow: () => isSwSafeWindow(),
+      beginCriticalOp: (name) => beginSwCriticalOp(name),
+      endCriticalOp: (name) => endSwCriticalOp(name),
+      invalidatePrepare: (reason) => invalidateSwPrepareCycle(reason),
+      handleMessage: (data) => handleSwCoordinatorMessage(data),
+      getSnapshot: () => ({
+        state: swUpdateState,
+        token: swActiveCycle ? swActiveCycle.token : null,
+        criticalOps: swActiveCriticalOps,
+        commitLocked: isSwCommitLocked(),
+        safeWindow: isSwSafeWindow(),
+        irreversibleTokenCount: swIrreversibleTokens.size
+      })
+    };
+    window.__NYXEN_SW_UPDATE__ = window.NyxenSwUpdateController;
+
+    /* -------------------------------------------------------------
        3. PARSER ROBUSTO, LIGERO Y SANITIZADO DE EPUB (Módulos + Sanitizador)
     ------------------------------------------------------------- */
     const resolveZipPath = window.NyxenEpubZip.resolveZipPath;
@@ -5869,6 +6588,7 @@ https://github.com/nodeca/pako/blob/main/LICENSE
        6. RUTAS Y CAMBIO DE VISTAS
     ------------------------------------------------------------- */
     async function showView(viewName, readerOptions = {}) {
+      if (isSwCommitLocked()) return;
       if (viewName !== "reader" && !document.getElementById("viewReader")?.classList.contains("hidden")) {
         flushPendingReaderProgress();
         if (typeof cancelReaderLayoutStabilization === "function") {
@@ -5902,6 +6622,7 @@ https://github.com/nodeca/pako/blob/main/LICENSE
         document.getElementById("viewLibrary")?.classList.remove("hidden");
         syncBrowserThemeColor(appConfig.bg);
         await renderLibrary({ skipDbFetch: Boolean(readerOptions.skipDbFetch) });
+        scheduleSafeWindowEvaluation();
       } else if (viewName === "detail") {
         if (typeof cancelReaderLayoutStabilization === "function") {
           cancelReaderLayoutStabilization({ resetStableState: true });
@@ -5909,17 +6630,21 @@ https://github.com/nodeca/pako/blob/main/LICENSE
         syncBrowserThemeColor(appConfig.bg);
         if (currentBook) {
           await ensureBookHydrated(currentBook);
+          if (isSwCommitLocked()) return;
           currentBook.lastOpenedAt = Date.now();
           await saveBookPatch(currentBook.id, { lastOpenedAt: currentBook.lastOpenedAt }, { fallbackBook: currentBook });
         }
+        if (isSwCommitLocked()) return;
         document.getElementById("viewStoryDetail")?.classList.remove("hidden");
         renderStoryDetail({ resetTab: true });
+        scheduleSafeWindowEvaluation();
       } else if (viewName === "reader") {
         if (currentBook) {
           if (typeof activeSearchBookId !== "undefined" && activeSearchBookId && activeSearchBookId !== currentBook.id && typeof resetDrawerSearchState === "function") {
             resetDrawerSearchState({ clearInput: true });
           }
           await ensureBookHydrated(currentBook);
+          if (isSwCommitLocked()) return;
           if (!Array.isArray(currentBook.chapters) || currentBook.chapters.length === 0) {
             showToast(currentLang === "es" ? "No se encontraron capítulos legibles." : "No readable chapters found.");
             await showView("library");
@@ -5932,6 +6657,7 @@ https://github.com/nodeca/pako/blob/main/LICENSE
             { hasStartedReading: true, lastOpenedAt: currentBook.lastOpenedAt },
             { fallbackBook: currentBook, skipPreMirrorWrite: true }
           );
+          if (isSwCommitLocked()) return;
           if (openRes && openRes.reason === "external-revision-conflict" && typeof externalProgressConflictState !== "undefined") {
             // El registro canónico externo acaba de sincronizarse en currentBook antes de renderizar
             externalProgressConflictState = null;
@@ -5945,6 +6671,7 @@ https://github.com/nodeca/pako/blob/main/LICENSE
         syncBrowserThemeColor(readerConfig.bgColor);
         setReaderControlsVisible(true);
         await renderReader(readerOptions);
+        scheduleSafeWindowEvaluation();
       }
     }
 
@@ -6168,70 +6895,76 @@ https://github.com/nodeca/pako/blob/main/LICENSE
     safeOn("btnCancelClear", "click", () => document.getElementById("clearConfirmModal")?.classList.add("hidden"));
 
     safeOn("btnConfirmClear", "click", async () => {
+      if (isSwCommitLocked()) return;
       document.getElementById("clearConfirmModal")?.classList.add("hidden");
-      const booksClearRes = await dbClear("books");
-      if (!booksClearRes || !booksClearRes.ok) {
-        showToast(
-          currentLang === "es"
-            ? "No se pudo vaciar la biblioteca en IndexedDB"
-            : "Could not clear library in IndexedDB",
-          4200
-        );
-        await renderLibrary();
-        return;
-      }
+      beginSwCriticalOp("clear-library");
+      try {
+        const booksClearRes = await dbClear("books");
+        if (!booksClearRes || !booksClearRes.ok) {
+          showToast(
+            currentLang === "es"
+              ? "No se pudo vaciar la biblioteca en IndexedDB"
+              : "Could not clear library in IndexedDB",
+            4200
+          );
+          await renderLibrary();
+          return;
+        }
 
-      revokeBookObjectUrls();
-      if (typeof revokeCoverObjectUrl === "function") revokeCoverObjectUrl();
-      if (typeof librarySearchIndexCache !== "undefined") librarySearchIndexCache.clear();
-      if (typeof booksById !== "undefined") booksById.clear();
-      if (typeof clearProgressTimers === "function") clearProgressTimers();
-      if (typeof lastSavedProgressState !== "undefined") {
-        lastSavedProgressState = createEmptySavedProgressState();
-      }
-      if (typeof externalProgressConflictState !== "undefined") {
-        externalProgressConflictState = null;
-      }
-      window.NyxenStorage.books.resetHydrationState();
-      const rc = document.getElementById("readerContent");
-      if (rc) rc.innerHTML = "";
+        revokeBookObjectUrls();
+        if (typeof revokeCoverObjectUrl === "function") revokeCoverObjectUrl();
+        if (typeof librarySearchIndexCache !== "undefined") librarySearchIndexCache.clear();
+        if (typeof booksById !== "undefined") booksById.clear();
+        if (typeof clearProgressTimers === "function") clearProgressTimers();
+        if (typeof lastSavedProgressState !== "undefined") {
+          lastSavedProgressState = createEmptySavedProgressState();
+        }
+        if (typeof externalProgressConflictState !== "undefined") {
+          externalProgressConflictState = null;
+        }
+        window.NyxenStorage.books.resetHydrationState();
+        const rc = document.getElementById("readerContent");
+        if (rc) rc.innerHTML = "";
 
-      const contentsClearRes = await dbClear("bookContents");
-      const assetsClearRes = await dbClear("bookAssets");
-      const settingKeys = await dbGetAllKeys("settings");
-      const historyKeys = settingKeys.filter(sKey => String(sKey).startsWith("bookSearchHistory_"));
-      let historyDeleteRes = { ok: true, persistedToIdb: Boolean(booksClearRes.persistedToIdb) };
-      if (historyKeys.length > 0) {
-        historyDeleteRes = await dbDeleteBatch("settings", historyKeys, 40);
-      }
+        const contentsClearRes = await dbClear("bookContents");
+        const assetsClearRes = await dbClear("bookAssets");
+        const settingKeys = await dbGetAllKeys("settings");
+        const historyKeys = settingKeys.filter(sKey => String(sKey).startsWith("bookSearchHistory_"));
+        let historyDeleteRes = { ok: true, persistedToIdb: Boolean(booksClearRes.persistedToIdb) };
+        if (historyKeys.length > 0) {
+          historyDeleteRes = await dbDeleteBatch("settings", historyKeys, 40);
+        }
 
-      if (typeof bookSearchHistoryCache !== "undefined") bookSearchHistoryCache.clear();
-      if (typeof resetDrawerSearchState === "function") resetDrawerSearchState({ clearInput: true });
-      if (typeof lastAutoRecordedSearch !== "undefined") {
-        lastAutoRecordedSearch = { bookId: null, norm: "", ts: 0 };
-      }
-      booksList = [];
-      currentBook = null;
-      activeQuoteCardState.book = null;
-      activeQuoteCardState.highlight = null;
-      await renderLibrary({ skipDbFetch: true });
+        if (typeof bookSearchHistoryCache !== "undefined") bookSearchHistoryCache.clear();
+        if (typeof resetDrawerSearchState === "function") resetDrawerSearchState({ clearInput: true });
+        if (typeof lastAutoRecordedSearch !== "undefined") {
+          lastAutoRecordedSearch = { bookId: null, norm: "", ts: 0 };
+        }
+        booksList = [];
+        currentBook = null;
+        activeQuoteCardState.book = null;
+        activeQuoteCardState.highlight = null;
+        await renderLibrary({ skipDbFetch: true });
 
-      if (!booksClearRes.persistedToIdb && booksClearRes.persistedToMemory) {
-        showToast(
-          currentLang === "es"
-            ? "Biblioteca vaciada solo en memoria temporal (IndexedDB no disponible)"
-            : "Library cleared in temporary RAM only (IndexedDB unavailable)",
-          4500
-        );
-      } else if (!contentsClearRes?.persistedToIdb || !assetsClearRes?.persistedToIdb || !historyDeleteRes?.ok) {
-        showToast(
-          currentLang === "es"
-            ? "Biblioteca vaciada, pero algunos recursos asociados no pudieron limpiarse"
-            : "Library cleared, but some associated assets could not be purged",
-          4500
-        );
-      } else {
-        showToast(currentLang === "es" ? "Biblioteca vaciada" : "Library cleared");
+        if (!booksClearRes.persistedToIdb && booksClearRes.persistedToMemory) {
+          showToast(
+            currentLang === "es"
+              ? "Biblioteca vaciada solo en memoria temporal (IndexedDB no disponible)"
+              : "Library cleared in temporary RAM only (IndexedDB unavailable)",
+            4500
+          );
+        } else if (!contentsClearRes?.persistedToIdb || !assetsClearRes?.persistedToIdb || !historyDeleteRes?.ok) {
+          showToast(
+            currentLang === "es"
+              ? "Biblioteca vaciada, pero algunos recursos asociados no pudieron limpiarse"
+              : "Library cleared, but some associated assets could not be purged",
+            4500
+          );
+        } else {
+          showToast(currentLang === "es" ? "Biblioteca vaciada" : "Library cleared");
+        }
+      } finally {
+        endSwCriticalOp("clear-library");
       }
     });
 
@@ -6802,8 +7535,10 @@ https://github.com/nodeca/pako/blob/main/LICENSE
     });
 
     safeOn("backupJsonInput", "change", async (e) => {
+      if (isSwCommitLocked()) return;
       const file = e.target.files && e.target.files[0];
       if (!file) return;
+      beginSwCriticalOp("import-backup");
       const overlay = document.getElementById("loadingOverlay");
       const loadingTextEl = document.getElementById("loadingText");
       try {
@@ -7105,6 +7840,7 @@ https://github.com/nodeca/pako/blob/main/LICENSE
           if (loadingTextEl) loadingTextEl.textContent = currentLang === "es" ? "Cargando..." : "Loading...";
         }
         e.target.value = "";
+        endSwCriticalOp("import-backup");
       }
     });
 
@@ -7119,6 +7855,7 @@ https://github.com/nodeca/pako/blob/main/LICENSE
     });
 
     safeOn("singleEpubInput", "change", async (e) => {
+      if (isSwCommitLocked()) return;
       const files = e.target.files ? Array.from(e.target.files) : [];
       if (files.length === 0) return;
 
@@ -7128,6 +7865,7 @@ https://github.com/nodeca/pako/blob/main/LICENSE
         return;
       }
 
+      beginSwCriticalOp("import-epub");
       const overlay = document.getElementById("loadingOverlay");
       const loadingTextEl = document.getElementById("loadingText");
       overlay?.classList.remove("hidden");
@@ -7189,6 +7927,7 @@ https://github.com/nodeca/pako/blob/main/LICENSE
         showToast(currentLang === "es" ? "Error al procesar el archivo EPUB." : "Error parsing EPUB file.");
       } finally {
         e.target.value = "";
+        endSwCriticalOp("import-epub");
       }
     });
 
@@ -7798,6 +8537,7 @@ https://github.com/nodeca/pako/blob/main/LICENSE
        9.1 MENÚ CONTEXTUAL DE LIBRO (5 ACCIONES)
     ------------------------------------------------------------- */
     function openBookContextMenu(book) {
+      if (isSwCommitLocked()) return;
       targetContextBook = book;
       const modal = document.getElementById("bookContextMenuModal");
       const sheet = document.getElementById("bookContextMenuSheet");
@@ -8258,51 +8998,57 @@ https://github.com/nodeca/pako/blob/main/LICENSE
     safeOn("btnCancelDeleteSingle", "click", () => document.getElementById("deleteSingleBookModal")?.classList.add("hidden"));
 
     safeOn("btnConfirmDeleteSingle", "click", async () => {
+      if (isSwCommitLocked()) return;
       if (!targetContextBook) return;
-      const bookId = targetContextBook.id;
-      const delRes = await deleteBookAndAssets(bookId);
-      document.getElementById("deleteSingleBookModal")?.classList.add("hidden");
+      beginSwCriticalOp("delete-book");
+      try {
+        const bookId = targetContextBook.id;
+        const delRes = await deleteBookAndAssets(bookId);
+        document.getElementById("deleteSingleBookModal")?.classList.add("hidden");
 
-      if (delRes && delRes.deletedFromIdb) {
-        booksList = booksList.filter(b => b.id !== bookId);
-        if (currentBook && currentBook.id === bookId) currentBook = null;
-        await renderLibrary();
-        if (!delRes.partial) {
-          showToast(currentLang === "es" ? "Libro eliminado de la biblioteca" : "Book deleted from library");
-        } else if (delRes.pendingCleanupPersisted) {
+        if (delRes && delRes.deletedFromIdb) {
+          booksList = booksList.filter(b => b.id !== bookId);
+          if (currentBook && currentBook.id === bookId) currentBook = null;
+          await renderLibrary();
+          if (!delRes.partial) {
+            showToast(currentLang === "es" ? "Libro eliminado de la biblioteca" : "Book deleted from library");
+          } else if (delRes.pendingCleanupPersisted) {
+            showToast(
+              currentLang === "es"
+                ? "Libro eliminado. Limpieza de archivos pendiente registrada para el próximo inicio"
+                : "Book deleted. Asset cleanup queued for next launch",
+              4400
+            );
+          } else {
+            showToast(
+              currentLang === "es"
+                ? "Libro eliminado de la biblioteca, pero quedaron archivos residuales sin poder registrar limpieza pendiente"
+                : "Book deleted from library, but residual files could not be removed or queued",
+              4800
+            );
+          }
+        } else if (delRes && delRes.deletedFromMemoryOnly) {
+          booksList = booksList.filter(b => b.id !== bookId);
+          if (currentBook && currentBook.id === bookId) currentBook = null;
+          await renderLibrary();
           showToast(
             currentLang === "es"
-              ? "Libro eliminado. Limpieza de archivos pendiente registrada para el próximo inicio"
-              : "Book deleted. Asset cleanup queued for next launch",
-            4400
+              ? "Eliminado solo en memoria temporal (IndexedDB no disponible); podría reaparecer al recargar"
+              : "Removed in temporary RAM only (IndexedDB unavailable); may reappear on reload",
+            4800
           );
         } else {
           showToast(
             currentLang === "es"
-              ? "Libro eliminado de la biblioteca, pero quedaron archivos residuales sin poder registrar limpieza pendiente"
-              : "Book deleted from library, but residual files could not be removed or queued",
-            4800
+              ? "No se pudo eliminar el libro de IndexedDB"
+              : "Could not delete book from IndexedDB",
+            4200
           );
         }
-      } else if (delRes && delRes.deletedFromMemoryOnly) {
-        booksList = booksList.filter(b => b.id !== bookId);
-        if (currentBook && currentBook.id === bookId) currentBook = null;
-        await renderLibrary();
-        showToast(
-          currentLang === "es"
-            ? "Eliminado solo en memoria temporal (IndexedDB no disponible); podría reaparecer al recargar"
-            : "Removed in temporary RAM only (IndexedDB unavailable); may reappear on reload",
-          4800
-        );
-      } else {
-        showToast(
-          currentLang === "es"
-            ? "No se pudo eliminar el libro de IndexedDB"
-            : "Could not delete book from IndexedDB",
-          4200
-        );
+        targetContextBook = null;
+      } finally {
+        endSwCriticalOp("delete-book");
       }
-      targetContextBook = null;
     });
 
     /* -------------------------------------------------------------
@@ -8320,43 +9066,52 @@ https://github.com/nodeca/pako/blob/main/LICENSE
     }
 
     async function persistDetailReview({ showSavedBadge = false } = {}) {
+      if (isSwCommitLocked()) return false;
       if (detailReviewSaveTimer) {
         clearTimeout(detailReviewSaveTimer);
         detailReviewSaveTimer = null;
       }
-      if (!currentBook) return;
+      if (!currentBook) return false;
       const textarea = document.getElementById("detailReviewTextarea");
-      if (!textarea) return;
+      if (!textarea) return false;
       const nextText = textarea.value.trim();
       const prevText = typeof currentBook.review === "string" ? currentBook.review.trim() : "";
-      if (nextText === prevText) return;
+      if (nextText === prevText) return true;
 
-      currentBook.review = nextText;
-      currentBook.reviewedAt = nextText ? Date.now() : 0;
-      await saveBookPatch(
-        currentBook.id,
-        { review: currentBook.review, reviewedAt: currentBook.reviewedAt },
-        { fallbackBook: currentBook }
-      );
-      updateDetailReviewDateUI();
+      beginSwCriticalOp("persist-review");
+      try {
+        currentBook.review = nextText;
+        currentBook.reviewedAt = nextText ? Date.now() : 0;
+        await saveBookPatch(
+          currentBook.id,
+          { review: currentBook.review, reviewedAt: currentBook.reviewedAt },
+          { fallbackBook: currentBook }
+        );
+        updateDetailReviewDateUI();
 
-      if (showSavedBadge) {
-        const statusEl = document.getElementById("detailReviewSaveStatus");
-        if (statusEl) {
-          statusEl.textContent = currentLang === "es" ? "· Guardado" : "· Saved";
-          statusEl.classList.remove("hidden");
-          if (detailReviewStatusTimer) clearTimeout(detailReviewStatusTimer);
-          detailReviewStatusTimer = setTimeout(() => {
-            statusEl.classList.add("hidden");
-          }, 1800);
+        if (showSavedBadge) {
+          const statusEl = document.getElementById("detailReviewSaveStatus");
+          if (statusEl) {
+            statusEl.textContent = currentLang === "es" ? "· Guardado" : "· Saved";
+            statusEl.classList.remove("hidden");
+            if (detailReviewStatusTimer) clearTimeout(detailReviewStatusTimer);
+            detailReviewStatusTimer = setTimeout(() => {
+              statusEl.classList.add("hidden");
+            }, 1800);
+          }
         }
+        return true;
+      } finally {
+        endSwCriticalOp("persist-review");
       }
     }
 
     function flushPendingDetailReview() {
+      if (isSwCommitLocked()) return Promise.resolve(false);
       if (detailReviewSaveTimer) {
-        persistDetailReview({ showSavedBadge: false });
+        return persistDetailReview({ showSavedBadge: false });
       }
+      return Promise.resolve(false);
     }
 
     function updateDetailReviewDateUI() {
@@ -8525,7 +9280,7 @@ https://github.com/nodeca/pako/blob/main/LICENSE
         };
 
         starsWrap.addEventListener("pointerdown", (e) => {
-          if (!currentBook) return;
+          if (isSwCommitLocked() || !currentBook) return;
           isSlidingStars = true;
           try { starsWrap.setPointerCapture(e.pointerId); } catch (err) {}
           const next = computeRatingAtClientX(e.clientX);
@@ -8535,7 +9290,7 @@ https://github.com/nodeca/pako/blob/main/LICENSE
         });
 
         starsWrap.addEventListener("pointermove", (e) => {
-          if (!isSlidingStars || !currentBook) return;
+          if (isSwCommitLocked() || !isSlidingStars || !currentBook) return;
           const next = computeRatingAtClientX(e.clientX);
           if (next !== lastPendingRating) {
             lastPendingRating = next;
@@ -8545,7 +9300,7 @@ https://github.com/nodeca/pako/blob/main/LICENSE
         });
 
         const finishSlide = async () => {
-          if (!isSlidingStars || !currentBook) return;
+          if (isSwCommitLocked() || !isSlidingStars || !currentBook) return;
           isSlidingStars = false;
           if (lastPendingRating !== null) {
             await saveBookPatch(currentBook.id, { rating: currentBook.rating }, { fallbackBook: currentBook });
@@ -8557,7 +9312,7 @@ https://github.com/nodeca/pako/blob/main/LICENSE
       }
 
       safeOn("btnClearDetailRating", "click", async () => {
-        if (!currentBook) return;
+        if (isSwCommitLocked() || !currentBook) return;
         currentBook.rating = 0;
         syncDetailRatingAndReviewUI();
         await saveBookPatch(currentBook.id, { rating: 0 }, { fallbackBook: currentBook });
@@ -8571,15 +9326,17 @@ https://github.com/nodeca/pako/blob/main/LICENSE
       if (textarea && !textarea.dataset.wired) {
         textarea.dataset.wired = "1";
         textarea.addEventListener("input", () => {
+          if (isSwCommitLocked()) return;
           autoResizeDetailReviewTextarea(textarea);
           const charCount = document.getElementById("detailReviewCharCount");
           if (charCount) charCount.textContent = `${textarea.value.length} / 2000`;
           if (detailReviewSaveTimer) clearTimeout(detailReviewSaveTimer);
           detailReviewSaveTimer = setTimeout(() => {
-            persistDetailReview({ showSavedBadge: true });
+            if (!isSwCommitLocked()) persistDetailReview({ showSavedBadge: true });
           }, 450);
         });
         textarea.addEventListener("blur", () => {
+          if (isSwCommitLocked()) return;
           persistDetailReview({ showSavedBadge: true });
         });
       }
@@ -8774,7 +9531,7 @@ https://github.com/nodeca/pako/blob/main/LICENSE
     safeOn("btnCancelEditMeta", "click", () => document.getElementById("editMetadataModal")?.classList.add("hidden"));
 
     safeOn("btnSaveEditMeta", "click", async () => {
-      if (!currentBook) return;
+      if (isSwCommitLocked() || !currentBook) return;
       const titleInput = document.getElementById("editMetaInputTitle");
       const authorInput = document.getElementById("editMetaInputAuthor");
       const descInput = document.getElementById("editMetaInputDesc");
@@ -10404,7 +11161,7 @@ https://github.com/nodeca/pako/blob/main/LICENSE
 
     function attachPassiveLateAssetWatcher(expectedRenderToken, expectedBookId, expectedChapterIdx) {
       clearPassiveLateAssetWatchers();
-      if (!isReaderViewActive()) return;
+      if (isSwCommitLocked() || !isReaderViewActive()) return;
       const content = document.getElementById("readerContent");
       const scrollAreaEl = document.getElementById("readerScrollArea");
       if (!content || !scrollAreaEl) return;
@@ -10427,6 +11184,10 @@ https://github.com/nodeca/pako/blob/main/LICENSE
 
       const maybeTriggerLateRestabilize = (reason) => {
         if (disposed) return;
+        if (isSwCommitLocked()) {
+          cleanupNow();
+          return;
+        }
         if (expectedRenderToken !== readerRenderToken || !isReaderViewActive()) {
           cleanupNow();
           return;
@@ -10507,6 +11268,7 @@ https://github.com/nodeca/pako/blob/main/LICENSE
     }
 
     function startReaderAnchorStabilization(anchor, fallbackRatio = 0, options = {}) {
+      if (isSwCommitLocked()) return;
       const renderTokenSnap = typeof options.renderToken === "number" ? options.renderToken : readerRenderToken;
       const attachAssetWatchers = options.attachAssetWatchers !== false;
       const applyImmediately = options.applyImmediately !== false;
@@ -10547,6 +11309,7 @@ https://github.com/nodeca/pako/blob/main/LICENSE
       activeStabilizationSession = session;
 
       const isSessionValid = () => (
+        !isSwCommitLocked() &&
         myToken === layoutStabilizeToken &&
         renderTokenSnap === readerRenderToken &&
         activeStabilizationSession === session &&
@@ -10747,6 +11510,7 @@ https://github.com/nodeca/pako/blob/main/LICENSE
     }
 
     function switchReaderReadingMode(targetMode) {
+      if (isSwCommitLocked()) return;
       const nextMode = targetMode === "paginated" ? "paginated" : "scroll";
       if (readerConfig.readingMode === nextMode) {
         updateReadingModeUI();
@@ -10790,7 +11554,7 @@ https://github.com/nodeca/pako/blob/main/LICENSE
 
     safeOn("btnAllowBookExternalMedia", "click", async (e) => {
       e.stopPropagation();
-      if (!currentBook) return;
+      if (isSwCommitLocked() || !currentBook) return;
       currentBook.allowExternalResources = true;
       const best = getBestStableAnchorForCurrentChapter();
       if (best.anchor) currentBook.chapterAnchor = best.anchor;
@@ -10838,7 +11602,7 @@ https://github.com/nodeca/pako/blob/main/LICENSE
     }
 
     async function renderReader(options = {}) {
-      if (!currentBook) return;
+      if (isSwCommitLocked() || !currentBook) return;
       const myRenderToken = ++readerRenderToken;
 
       document.getElementById("directHighlightToolbar")?.classList.add("hidden");
@@ -10847,7 +11611,7 @@ https://github.com/nodeca/pako/blob/main/LICENSE
       activeClickedHighlightId = null;
 
       await ensureBookHydrated(currentBook);
-      if (myRenderToken !== readerRenderToken) return;
+      if (isSwCommitLocked() || myRenderToken !== readerRenderToken) return;
       if (!currentBook || !currentBook.chapters || currentBook.chapters.length === 0) return;
 
       const scrollAreaEl = document.getElementById("readerScrollArea");
@@ -11008,7 +11772,7 @@ https://github.com/nodeca/pako/blob/main/LICENSE
     }
 
     safeOn("btnToggleChapterFavorite", "click", async () => {
-      if (!currentBook || !currentBook.chapters || !currentBook.chapters[currentBook.currentChapter]) return;
+      if (isSwCommitLocked() || !currentBook || !currentBook.chapters || !currentBook.chapters[currentBook.currentChapter]) return;
       const ch = currentBook.chapters[currentBook.currentChapter];
       ch.isFavorite = !ch.isFavorite;
       const favList = currentBook.chapters.filter(c => c.isFavorite).map(c => c.index);
@@ -11062,12 +11826,12 @@ https://github.com/nodeca/pako/blob/main/LICENSE
     }
 
     function scheduleChapterWordCountBackfill(book, renderTokenSnap) {
-      if (!book || !Array.isArray(book.chapters)) return;
+      if (isSwCommitLocked() || !book || !Array.isArray(book.chapters)) return;
       const myBackfillToken = ++wordCountBackfillToken;
       const total = book.chapters.length;
       let idx = 0;
       const step = () => {
-        if (myBackfillToken !== wordCountBackfillToken || renderTokenSnap !== readerRenderToken || currentBook !== book) return;
+        if (isSwCommitLocked() || myBackfillToken !== wordCountBackfillToken || renderTokenSnap !== readerRenderToken || currentBook !== book) return;
         const startMs = performance.now();
         while (idx < total) {
           if (!book.chapterWordCounts[idx]) {
@@ -11078,7 +11842,7 @@ https://github.com/nodeca/pako/blob/main/LICENSE
         }
         if (idx < total) {
           setTimeout(step, 16);
-        } else {
+        } else if (!isSwCommitLocked()) {
           saveBookPatch(
             book.id,
             { chapterWordCounts: Array.isArray(book.chapterWordCounts) ? [...book.chapterWordCounts] : [] },
@@ -11378,27 +12142,31 @@ https://github.com/nodeca/pako/blob/main/LICENSE
     }
 
     function scheduleProgressFlush(delayMs = 650, flushOptions = {}) {
+      if (isSwCommitLocked()) return;
       clearTimeout(scrollSaveTimer);
       scrollSaveTimer = setTimeout(() => {
         scrollSaveTimer = null;
-        flushPendingReaderProgress(flushOptions);
+        if (!isSwCommitLocked()) flushPendingReaderProgress(flushOptions);
       }, delayMs);
 
       if (!progressThrottleTimer) {
         progressThrottleTimer = setTimeout(() => {
           progressThrottleTimer = null;
-          flushPendingReaderProgress({ reason: "throttle", userInitiated: Boolean(flushOptions.userInitiated) });
+          if (!isSwCommitLocked()) {
+            flushPendingReaderProgress({ reason: "throttle", userInitiated: Boolean(flushOptions.userInitiated) });
+          }
         }, PROGRESS_THROTTLE_MS);
       }
     }
 
     async function navigateToReaderChapter(targetChapterIdx, options = {}) {
-      if (!currentBook || isSwitchingChapter) return false;
+      if (isSwCommitLocked() || !currentBook || isSwitchingChapter) return false;
       const totalChapters = Math.max(1, currentBook.totalChapters || (currentBook.chapters ? currentBook.chapters.length : 1));
       const clampedTarget = Math.max(0, Math.min(targetChapterIdx, totalChapters - 1));
 
       isSwitchingChapter = true;
       clearProgressTimers();
+      beginSwCriticalOp("navigate-chapter");
 
       try {
         const outgoingChapter = currentBook.currentChapter || 0;
@@ -11450,6 +12218,8 @@ https://github.com/nodeca/pako/blob/main/LICENSE
           }
         }
 
+        if (isSwCommitLocked()) return false;
+
         // Mutar capítulo destino SOLO después de capturar y encolar el capítulo saliente
         const targetRatio = typeof options.targetRatio === "number" ? options.targetRatio : 0;
         currentBook.currentChapter = clampedTarget;
@@ -11473,7 +12243,7 @@ https://github.com/nodeca/pako/blob/main/LICENSE
         );
         applyConfirmedProgressState(destCandidate, destRes);
 
-        if (!options.deferRender) {
+        if (!options.deferRender && !isSwCommitLocked()) {
           await renderReader({
             resetScroll: options.searchQuery ? false : (options.resetScroll !== false),
             searchQuery: options.searchQuery,
@@ -11483,6 +12253,7 @@ https://github.com/nodeca/pako/blob/main/LICENSE
         return true;
       } finally {
         isSwitchingChapter = false;
+        endSwCriticalOp("navigate-chapter");
       }
     }
 
@@ -11527,7 +12298,7 @@ https://github.com/nodeca/pako/blob/main/LICENSE
     }
 
     async function stepReaderPage(direction) {
-      if (!scrollArea || !currentBook || isSwitchingChapter) return;
+      if (isSwCommitLocked() || !scrollArea || !currentBook || isSwitchingChapter) return;
       cancelReaderLayoutStabilization({ resetStableState: false });
       const step = getReaderPageStep();
       const maxScroll = Math.max(0, scrollArea.scrollHeight - scrollArea.clientHeight);
@@ -11565,6 +12336,7 @@ https://github.com/nodeca/pako/blob/main/LICENSE
 
     if (scrollArea) {
       scrollArea.addEventListener("touchstart", (e) => {
+        if (isSwCommitLocked()) return;
         if (e.touches.length === 1) {
           isTouchMoved = false;
           isUserTouchDragging = false;
@@ -11575,6 +12347,7 @@ https://github.com/nodeca/pako/blob/main/LICENSE
       }, { passive: true });
 
       scrollArea.addEventListener("touchmove", (e) => {
+        if (isSwCommitLocked()) return;
         if (e.touches.length === 1) {
           const dx = Math.abs(e.touches[0].clientX - touchStartX);
           const dy = Math.abs(e.touches[0].clientY - touchStartY);
@@ -11596,6 +12369,7 @@ https://github.com/nodeca/pako/blob/main/LICENSE
 
       scrollArea.addEventListener("touchend", (e) => {
         clearTouchDragFlag();
+        if (isSwCommitLocked()) return;
         lastTouchEndTime = Date.now();
         const touchDuration = lastTouchEndTime - touchStartTime;
         const endX = e.changedTouches && e.changedTouches[0] ? e.changedTouches[0].clientX : touchStartX;
@@ -11621,6 +12395,7 @@ https://github.com/nodeca/pako/blob/main/LICENSE
       });
 
       scrollArea.addEventListener("wheel", (e) => {
+        if (isSwCommitLocked()) return;
         if (Math.abs(e.deltaY) > 0 || Math.abs(e.deltaX) > 0) {
           lastUserScrollInputAt = Date.now();
           if (activeStabilizationSession) {
@@ -11630,19 +12405,21 @@ https://github.com/nodeca/pako/blob/main/LICENSE
       }, { passive: true });
 
       scrollArea.addEventListener("click", (e) => {
+        if (isSwCommitLocked()) return;
         if (Date.now() - lastTouchHandledTime < 500) return;
         if (isInteractiveReaderTarget(e.target)) return;
         handleReaderZonedTap(e.clientX);
       });
 
       scrollArea.addEventListener("scroll", () => {
+        if (isSwCommitLocked()) return;
         const fnPopup = document.getElementById("footnotePopup");
         if (fnPopup && !fnPopup.classList.contains("hidden")) fnPopup.classList.add("hidden");
 
         if (!scrollFrameRaf) {
           scrollFrameRaf = requestAnimationFrame(() => {
             scrollFrameRaf = 0;
-            updateReaderPaginationIndicator();
+            if (!isSwCommitLocked()) updateReaderPaginationIndicator();
           });
         }
 
@@ -11660,7 +12437,7 @@ https://github.com/nodeca/pako/blob/main/LICENSE
         clearTimeout(scrollStableSnapshotTimer);
         scrollStableSnapshotTimer = setTimeout(() => {
           scrollStableSnapshotTimer = null;
-          if (!isRestoringScroll && !activeStabilizationSession && !isUserTouchDragging && !isSwitchingChapter) {
+          if (!isSwCommitLocked() && !isRestoringScroll && !activeStabilizationSession && !isUserTouchDragging && !isSwitchingChapter) {
             captureStableReaderStateSnapshot({ updateBookMeta: false });
             hasUserMovedAfterStabilize = false;
           }
@@ -11682,7 +12459,7 @@ https://github.com/nodeca/pako/blob/main/LICENSE
     }
 
     document.addEventListener("keydown", (e) => {
-      if (!isReaderViewActive()) return;
+      if (isSwCommitLocked() || !isReaderViewActive()) return;
       const tag = document.activeElement ? document.activeElement.tagName : "";
       if (tag === "INPUT" || tag === "TEXTAREA" || document.activeElement?.isContentEditable) return;
       if (["ArrowUp", "ArrowDown", "PageUp", "PageDown", " ", "Home", "End"].includes(e.key)) {
@@ -11694,6 +12471,16 @@ https://github.com/nodeca/pako/blob/main/LICENSE
     });
 
     async function flushPendingReaderProgress(options = {}) {
+      if (isSwCommitLocked()) {
+        return {
+          ok: false,
+          persistedToIdb: false,
+          writtenToIdb: false,
+          skipped: false,
+          blockedByCommitHold: true,
+          reason: "commit-hold-active"
+        };
+      }
       clearTimeout(scrollSaveTimer);
       scrollSaveTimer = null;
       clearTimeout(progressThrottleTimer);
@@ -11703,7 +12490,9 @@ https://github.com/nodeca/pako/blob/main/LICENSE
       if (typeof readerConfigSaveTimer !== "undefined" && readerConfigSaveTimer) {
         clearTimeout(readerConfigSaveTimer);
         readerConfigSaveTimer = null;
-        dbSave("settings", { key: "readerConfig", val: readerConfig });
+        if (!isSwCommitLocked()) {
+          dbSave("settings", { key: "readerConfig", val: readerConfig });
+        }
       }
       if (!currentBook || !scrollArea || isRestoringScroll || activeStabilizationSession || isSwitchingChapter) {
         return { ok: false, persistedToIdb: false, writtenToIdb: false, skipped: true, reason: "reader-busy" };
@@ -11789,8 +12578,10 @@ https://github.com/nodeca/pako/blob/main/LICENSE
     }
 
     document.addEventListener("visibilitychange", () => {
+      if (isSwCommitLocked()) return;
       if (document.visibilityState === "hidden") {
         flushPendingReaderProgress({ reason: "visibilitychange" });
+        scheduleSafeWindowEvaluation();
       } else if (document.visibilityState === "visible") {
         if (typeof resetDbRetryCooldown === "function") resetDbRetryCooldown();
         if (window.NyxenStorage && window.NyxenStorage.raw) {
@@ -11798,14 +12589,24 @@ https://github.com/nodeca/pako/blob/main/LICENSE
             ensureDb().catch(() => {});
           }
         }
+        scheduleSafeWindowEvaluation();
       }
     });
-    window.addEventListener("pagehide", () => flushPendingReaderProgress({ reason: "pagehide" }));
-    document.addEventListener("freeze", () => flushPendingReaderProgress({ reason: "freeze" }));
-    window.addEventListener("beforeunload", () => flushPendingReaderProgress({ reason: "beforeunload" }));
+    window.addEventListener("pagehide", () => {
+      if (isSwCommitLocked()) return;
+      flushPendingReaderProgress({ reason: "pagehide" });
+    });
+    document.addEventListener("freeze", () => {
+      if (isSwCommitLocked()) return;
+      flushPendingReaderProgress({ reason: "freeze" });
+    });
+    window.addEventListener("beforeunload", () => {
+      if (isSwCommitLocked()) return;
+      flushPendingReaderProgress({ reason: "beforeunload" });
+    });
 
     function handleReaderViewportDimensionChange() {
-      if (!isReaderViewActive()) return;
+      if (isSwCommitLocked() || !isReaderViewActive()) return;
       if (activeStabilizationSession && activeStabilizationSession.isApplyingRestore) return;
       const sa = document.getElementById("readerScrollArea");
       if (!sa) return;
@@ -11870,27 +12671,31 @@ https://github.com/nodeca/pako/blob/main/LICENSE
 
     if (scrollArea && typeof ResizeObserver === "function") {
       const viewportResizeObserver = new ResizeObserver(() => {
-        handleReaderViewportDimensionChange();
+        if (!isSwCommitLocked()) handleReaderViewportDimensionChange();
       });
       viewportResizeObserver.observe(scrollArea);
     }
 
     let readerResizeDebounce = null;
     window.addEventListener("resize", () => {
-      if (!isReaderViewActive()) return;
+      if (isSwCommitLocked() || !isReaderViewActive()) return;
       clearTimeout(readerResizeDebounce);
       readerResizeDebounce = setTimeout(() => {
-        handleReaderViewportDimensionChange();
+        if (!isSwCommitLocked()) handleReaderViewportDimensionChange();
       }, 48);
     });
     window.addEventListener("orientationchange", () => {
-      if (!isReaderViewActive()) return;
-      requestAnimationFrame(() => handleReaderViewportDimensionChange());
+      if (isSwCommitLocked() || !isReaderViewActive()) return;
+      requestAnimationFrame(() => {
+        if (!isSwCommitLocked()) handleReaderViewportDimensionChange();
+      });
     });
     if (window.screen && window.screen.orientation && typeof window.screen.orientation.addEventListener === "function") {
       window.screen.orientation.addEventListener("change", () => {
-        if (!isReaderViewActive()) return;
-        requestAnimationFrame(() => handleReaderViewportDimensionChange());
+        if (isSwCommitLocked() || !isReaderViewActive()) return;
+        requestAnimationFrame(() => {
+          if (!isSwCommitLocked()) handleReaderViewportDimensionChange();
+        });
       });
     }
 
@@ -12477,7 +13282,7 @@ https://github.com/nodeca/pako/blob/main/LICENSE
     }
 
     async function deleteHighlightById(hlId) {
-      if (!currentBook) return;
+      if (isSwCommitLocked() || !currentBook) return;
       currentBook.highlights = (currentBook.highlights || []).filter(h => h.id !== hlId);
       await saveBookPatch(currentBook.id, { highlights: currentBook.highlights }, { fallbackBook: currentBook });
 
@@ -13367,8 +14172,11 @@ https://github.com/nodeca/pako/blob/main/LICENSE
     let lastRenderedSwatchesKey = "";
 
     function scheduleSelectionToolbarUpdate(delayMs = 180) {
+      if (isSwCommitLocked()) return;
       clearTimeout(selectionChangeDebounce);
-      selectionChangeDebounce = setTimeout(handleTextSelection, delayMs);
+      selectionChangeDebounce = setTimeout(() => {
+        if (!isSwCommitLocked()) handleTextSelection();
+      }, delayMs);
     }
 
     if (scrollArea) {
@@ -13379,12 +14187,14 @@ https://github.com/nodeca/pako/blob/main/LICENSE
         return false;
       });
       scrollArea.addEventListener("mouseup", () => {
+        if (isSwCommitLocked()) return;
         isSelectionPointerDown = false;
         scheduleSelectionToolbarUpdate(40);
       });
     }
 
     const markSelectionPointerDown = (e) => {
+      if (isSwCommitLocked()) return;
       const target = e.target;
       if (target && typeof target.closest === "function") {
         if (target.closest("#directHighlightToolbar") || target.closest("#existingHighlightPopup")) return;
@@ -13393,6 +14203,7 @@ https://github.com/nodeca/pako/blob/main/LICENSE
     };
 
     const markSelectionPointerUp = () => {
+      if (isSwCommitLocked()) return;
       const wasDown = isSelectionPointerDown;
       isSelectionPointerDown = false;
       if (!wasDown) return;
@@ -13412,6 +14223,7 @@ https://github.com/nodeca/pako/blob/main/LICENSE
     document.addEventListener("touchcancel", markSelectionPointerUp, { passive: true, capture: true });
 
     document.addEventListener("selectionchange", () => {
+      if (isSwCommitLocked()) return;
       if (document.getElementById("viewReader")?.classList.contains("hidden")) return;
       if (isToolbarPointerInteracting) return;
 
@@ -13641,6 +14453,7 @@ https://github.com/nodeca/pako/blob/main/LICENSE
     }
 
     function handleTextSelection() {
+      if (isSwCommitLocked()) return;
       const readerView = document.getElementById("viewReader");
       const readerContent = document.getElementById("readerContent");
       const blockingModalOpen = ["foliateDrawer", "noteModal", "quoteCardModal", "proColorPickerModal", "dictionaryOverlay"].some(id => {
@@ -13912,7 +14725,7 @@ https://github.com/nodeca/pako/blob/main/LICENSE
     }
 
     function createMultiParagraphHighlight(color) {
-      if (!selectedTextRange || !currentBook) return;
+      if (isSwCommitLocked() || !selectedTextRange || !currentBook) return;
       const chapters = Array.isArray(currentBook.chapters) ? currentBook.chapters : [];
       const curCh = chapters[currentBook.currentChapter];
       if (!curCh) return;
@@ -14073,7 +14886,7 @@ https://github.com/nodeca/pako/blob/main/LICENSE
     }
 
     function applyHighlightColorToDomAndSave(hlId, newColor) {
-      if (!hlId || !currentBook || !newColor) return;
+      if (isSwCommitLocked() || !hlId || !currentBook || !newColor) return;
       const hl = (currentBook.highlights || []).find(h => h.id === hlId);
       if (!hl) return;
       hl.color = newColor;
@@ -14191,7 +15004,7 @@ https://github.com/nodeca/pako/blob/main/LICENSE
     });
 
     safeOn("btnExistingToggleUnderline", "click", async () => {
-      if (!activeClickedHighlightId || !currentBook) return;
+      if (isSwCommitLocked() || !activeClickedHighlightId || !currentBook) return;
       const hl = (currentBook.highlights || []).find(h => h.id === activeClickedHighlightId);
       if (hl) {
         hl.style = hl.style === "rounded" ? "underline" : "rounded";
@@ -14343,23 +15156,27 @@ https://github.com/nodeca/pako/blob/main/LICENSE
     let offlineHistoryDirty = false;
 
     function flushOfflineHistoryCache() {
-      if (!offlineHistoryDirty) return;
+      if (isSwCommitLocked()) return Promise.resolve(false);
+      if (!offlineHistoryDirty) return Promise.resolve(true);
       offlineHistoryDirty = false;
       clearTimeout(offlineHistoryFlushTimer);
       offlineHistoryFlushTimer = null;
-      dbSave("dictPacks", { lang: "cache", entries: offlineHistoryEntries });
+      return Promise.resolve(dbSave("dictPacks", { lang: "cache", entries: offlineHistoryEntries }));
     }
 
     if (typeof window !== "undefined") {
-      window.addEventListener("pagehide", flushOfflineHistoryCache);
+      window.addEventListener("pagehide", () => {
+        if (!isSwCommitLocked()) flushOfflineHistoryCache();
+      });
       document.addEventListener("visibilitychange", () => {
-        if (document.visibilityState === "hidden") flushOfflineHistoryCache();
+        if (!isSwCommitLocked() && document.visibilityState === "hidden") flushOfflineHistoryCache();
       });
     }
 
     async function saveWordToOfflineCache(cacheKey, entry) {
-      if (!cacheKey || !entry) return;
+      if (isSwCommitLocked() || !cacheKey || !entry) return;
       await ensureOfflineHistoryLoaded();
+      if (isSwCommitLocked()) return;
       if (Object.prototype.hasOwnProperty.call(offlineHistoryEntries, cacheKey)) {
         delete offlineHistoryEntries[cacheKey];
       }
@@ -14371,7 +15188,9 @@ https://github.com/nodeca/pako/blob/main/LICENSE
       }
       offlineHistoryDirty = true;
       clearTimeout(offlineHistoryFlushTimer);
-      offlineHistoryFlushTimer = setTimeout(flushOfflineHistoryCache, 700);
+      offlineHistoryFlushTimer = setTimeout(() => {
+        if (!isSwCommitLocked()) flushOfflineHistoryCache();
+      }, 700);
     }
 
     async function loadOfflinePack(lang) {
@@ -14440,82 +15259,87 @@ https://github.com/nodeca/pako/blob/main/LICENSE
     }
 
     async function toggleOfflineDictPack(lang) {
-      if (offlinePackDownloading[lang]) return;
-      const isInstalled = Boolean(offlineDictPacksMeta && offlineDictPacksMeta[lang]);
-      if (isInstalled) {
-        const delRes = await dbDelete("dictPacks", lang);
-        if (delRes && delRes.ok === false) {
-          showToast(
-            currentLang === "es"
-              ? `No se pudo eliminar el diccionario (${lang.toUpperCase()})`
-              : `Could not remove dictionary (${lang.toUpperCase()})`
-          );
+      if (isSwCommitLocked() || offlinePackDownloading[lang]) return;
+      beginSwCriticalOp(`dict-pack-${lang}`);
+      try {
+        const isInstalled = Boolean(offlineDictPacksMeta && offlineDictPacksMeta[lang]);
+        if (isInstalled) {
+          const delRes = await dbDelete("dictPacks", lang);
+          if (delRes && delRes.ok === false) {
+            showToast(
+              currentLang === "es"
+                ? `No se pudo eliminar el diccionario (${lang.toUpperCase()})`
+                : `Could not remove dictionary (${lang.toUpperCase()})`
+            );
+            return;
+          }
+          offlinePackMem[lang] = null;
+          offlineDictPacksMeta[lang] = null;
+          await dbSave("settings", { key: "offlineDictPacksMeta", val: offlineDictPacksMeta });
+          syncOfflineDictSettingsUI();
+          showToast(currentLang === "es" ? `Diccionario offline (${lang.toUpperCase()}) eliminado` : `Offline dictionary (${lang.toUpperCase()}) removed`);
           return;
         }
-        offlinePackMem[lang] = null;
-        offlineDictPacksMeta[lang] = null;
-        await dbSave("settings", { key: "offlineDictPacksMeta", val: offlineDictPacksMeta });
+
+        if (!navigator.onLine) {
+          showToast(currentLang === "es" ? "Conéctate a internet para descargarlo una vez" : "Connect to the internet to download once");
+          return;
+        }
+
+        offlinePackDownloading[lang] = true;
         syncOfflineDictSettingsUI();
-        showToast(currentLang === "es" ? `Diccionario offline (${lang.toUpperCase()}) eliminado` : `Offline dictionary (${lang.toUpperCase()}) removed`);
-        return;
-      }
+        showToast(currentLang === "es" ? `Descargando diccionario ${lang.toUpperCase()}...` : `Downloading ${lang.toUpperCase()} dictionary...`);
 
-      if (!navigator.onLine) {
-        showToast(currentLang === "es" ? "Conéctate a internet para descargarlo una vez" : "Connect to the internet to download once");
-        return;
-      }
+        try {
+          const res = await fetch(OFFLINE_DICT_SOURCES[lang], { credentials: "omit", referrerPolicy: "no-referrer" });
+          if (!res.ok) throw new Error("HTTP " + res.status);
+          const raw = await res.json();
 
-      offlinePackDownloading[lang] = true;
-      syncOfflineDictSettingsUI();
-      showToast(currentLang === "es" ? `Descargando diccionario ${lang.toUpperCase()}...` : `Downloading ${lang.toUpperCase()} dictionary...`);
+          let wordsMap = {};
+          let count = 0;
 
-      try {
-        const res = await fetch(OFFLINE_DICT_SOURCES[lang], { credentials: "omit", referrerPolicy: "no-referrer" });
-        if (!res.ok) throw new Error("HTTP " + res.status);
-        const raw = await res.json();
-
-        let wordsMap = {};
-        let count = 0;
-
-        if (lang === "en" && raw && typeof raw === "object" && !Array.isArray(raw)) {
-          for (const [k, v] of Object.entries(raw)) {
-            if (typeof v === "string" && v) {
-              wordsMap[k.toLowerCase()] = v;
+          if (lang === "en" && raw && typeof raw === "object" && !Array.isArray(raw)) {
+            for (const [k, v] of Object.entries(raw)) {
+              if (typeof v === "string" && v) {
+                wordsMap[k.toLowerCase()] = v;
+                count++;
+              }
+            }
+          } else if (lang === "es" && Array.isArray(raw)) {
+            for (let i = 0; i < raw.length; i++) {
+              const item = raw[i];
+              if (!item || !item.word || !Array.isArray(item.definitions) || item.definitions.length === 0) continue;
+              const key = String(item.word).trim().toLowerCase();
+              if (!key) continue;
+              wordsMap[key] = {
+                p: item.pos ? String(item.pos) : "",
+                d: item.definitions.slice(0, 4).map(x => String(x || "").trim()).filter(Boolean)
+              };
               count++;
             }
           }
-        } else if (lang === "es" && Array.isArray(raw)) {
-          for (let i = 0; i < raw.length; i++) {
-            const item = raw[i];
-            if (!item || !item.word || !Array.isArray(item.definitions) || item.definitions.length === 0) continue;
-            const key = String(item.word).trim().toLowerCase();
-            if (!key) continue;
-            wordsMap[key] = {
-              p: item.pos ? String(item.pos) : "",
-              d: item.definitions.slice(0, 4).map(x => String(x || "").trim()).filter(Boolean)
-            };
-            count++;
-          }
+
+          if (count === 0) throw new Error("Empty pack");
+
+          await dbSave("dictPacks", { lang, words: wordsMap });
+          offlinePackMem[lang] = wordsMap;
+          offlineDictPacksMeta[lang] = { count, updatedAt: Date.now() };
+          await dbSave("settings", { key: "offlineDictPacksMeta", val: offlineDictPacksMeta });
+
+          showToast(
+            currentLang === "es"
+              ? `Diccionario ${lang.toUpperCase()} listo offline (${count.toLocaleString()} palabras)`
+              : `${lang.toUpperCase()} dictionary ready offline (${count.toLocaleString()} words)`
+          );
+        } catch (err) {
+          console.warn("Error downloading offline pack:", err);
+          showToast(currentLang === "es" ? "No se pudo descargar el diccionario offline" : "Could not download offline dictionary");
+        } finally {
+          offlinePackDownloading[lang] = false;
+          syncOfflineDictSettingsUI();
         }
-
-        if (count === 0) throw new Error("Empty pack");
-
-        await dbSave("dictPacks", { lang, words: wordsMap });
-        offlinePackMem[lang] = wordsMap;
-        offlineDictPacksMeta[lang] = { count, updatedAt: Date.now() };
-        await dbSave("settings", { key: "offlineDictPacksMeta", val: offlineDictPacksMeta });
-
-        showToast(
-          currentLang === "es"
-            ? `Diccionario ${lang.toUpperCase()} listo offline (${count.toLocaleString()} palabras)`
-            : `${lang.toUpperCase()} dictionary ready offline (${count.toLocaleString()} words)`
-        );
-      } catch (err) {
-        console.warn("Error downloading offline pack:", err);
-        showToast(currentLang === "es" ? "No se pudo descargar el diccionario offline" : "Could not download offline dictionary");
       } finally {
-        offlinePackDownloading[lang] = false;
-        syncOfflineDictSettingsUI();
+        endSwCriticalOp(`dict-pack-${lang}`);
       }
     }
 
@@ -16566,7 +17390,7 @@ https://github.com/nodeca/pako/blob/main/LICENSE
     });
 
     safeOn("btnSaveNote", "click", async () => {
-      if (!currentBook) return;
+      if (isSwCommitLocked() || !currentBook) return;
       const input = document.getElementById("noteInput");
       const noteText = input ? input.value.trim() : "";
 
@@ -16822,10 +17646,11 @@ https://github.com/nodeca/pako/blob/main/LICENSE
 
     let readerConfigSaveTimer = null;
     function scheduleSaveReaderConfig() {
+      if (isSwCommitLocked()) return;
       clearTimeout(readerConfigSaveTimer);
       readerConfigSaveTimer = setTimeout(() => {
         readerConfigSaveTimer = null;
-        dbSave("settings", { key: "readerConfig", val: readerConfig });
+        if (!isSwCommitLocked()) dbSave("settings", { key: "readerConfig", val: readerConfig });
       }, 260);
     }
 
@@ -17095,7 +17920,7 @@ https://github.com/nodeca/pako/blob/main/LICENSE
     }
 
     function openThemeActionMenu(th) {
-      if (!th) return;
+      if (isSwCommitLocked() || !th) return;
       activeThemeActionTarget = { ...th };
       const dot = document.getElementById("themeActionPreviewDot");
       const titleEl = document.getElementById("themeActionMenuTitle");
@@ -17118,7 +17943,7 @@ https://github.com/nodeca/pako/blob/main/LICENSE
     }
 
     async function deleteReadingTheme(themeId) {
-      if (!themeId) return false;
+      if (isSwCommitLocked() || !themeId) return false;
       if (allThemes.length <= 1) {
         showToast(currentLang === "es" ? "Debe quedar al menos un tema" : "At least one theme must remain");
         return false;
@@ -17225,7 +18050,7 @@ https://github.com/nodeca/pako/blob/main/LICENSE
     }
 
     function applyThemeToReader(th, { persist = true } = {}) {
-      if (!th) return;
+      if (isSwCommitLocked() || !th) return;
       readerConfig.bgColor = th.bg;
       readerConfig.textColor = th.text;
       readerConfig.accentColor = th.accent;
@@ -17338,6 +18163,7 @@ https://github.com/nodeca/pako/blob/main/LICENSE
     });
 
     safeOn("btnSaveThemeModal", "click", async () => {
+      if (isSwCommitLocked()) return;
       const nameInput = document.getElementById("themeInputName");
       currentEditingTheme.name = nameInput ? nameInput.value.trim() || "Tema" : "Tema";
 
@@ -17960,9 +18786,11 @@ https://github.com/nodeca/pako/blob/main/LICENSE
     });
 
     safeOn("customFontInput", "change", async (e) => {
+      if (isSwCommitLocked()) return;
       const file = e.target.files && e.target.files[0];
       if (!file) return;
 
+      beginSwCriticalOp("custom-font");
       const fontName = file.name.replace(/\.[^/.]+$/, "");
       try {
         const arrayBuffer = await file.arrayBuffer();
@@ -17979,6 +18807,7 @@ https://github.com/nodeca/pako/blob/main/LICENSE
         showToast(currentLang === "es" ? "Error al cargar fuente." : "Error loading font.");
       } finally {
         e.target.value = "";
+        endSwCriticalOp("custom-font");
       }
     });
 
@@ -18162,9 +18991,23 @@ https://github.com/nodeca/pako/blob/main/LICENSE
             4200
           );
         }
+
+        swBridgeReady = true;
+        swLastSafeWindowValue = isSwSafeWindow();
+        postToSwParent({
+          type: "NYXEN_SW_HELLO",
+          ready: true,
+          safeWindow: swLastSafeWindowValue,
+          lockState: swUpdateState
+        });
+        scheduleSafeWindowEvaluation();
       } catch (err) {
         console.error("Error crítico inicializando Nyxen:", err);
         updateTempStorageWarningBanner();
+        postToSwParent({
+          type: "NYXEN_SW_IFRAME_INIT_ERROR",
+          error: err instanceof Error ? err.message : String(err || "init-error")
+        });
         try {
           await showView("library");
         } catch (fallbackErr) {

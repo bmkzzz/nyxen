@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { OfflineIndicator } from './components/OfflineIndicator';
 import { PWAInstallButton } from './components/PWAInstallButton';
 import { usePWAInstall } from './hooks/usePWAInstall';
+import { swUpdateCoordinator } from './swUpdateCoordinator';
 
 export default function App() {
   const iframeRef = useRef<HTMLIFrameElement | null>(null);
@@ -9,6 +10,8 @@ export default function App() {
   const [showIOSGuide, setShowIOSGuide] = useState(false);
 
   useEffect(() => {
+    swUpdateCoordinator.setIframeElement(iframeRef.current);
+
     const syncPwaState = () => {
       try {
         iframeRef.current?.contentWindow?.postMessage(
@@ -32,6 +35,11 @@ export default function App() {
       const data = event.data;
       if (!data || typeof data !== 'object') return;
 
+      if (typeof data.type === 'string' && data.type.startsWith('NYXEN_SW_')) {
+        swUpdateCoordinator.handleWindowMessage(event);
+        return;
+      }
+
       if (data.type === 'NYXEN_REQUEST_PWA_STATE') {
         syncPwaState();
       } else if (data.type === 'NYXEN_REQUEST_PWA_INSTALL') {
@@ -49,7 +57,10 @@ export default function App() {
     };
 
     window.addEventListener('message', handleMessage);
-    return () => window.removeEventListener('message', handleMessage);
+    return () => {
+      window.removeEventListener('message', handleMessage);
+      swUpdateCoordinator.setIframeElement(null);
+    };
   }, [isInstallable, isInstalled, isIOS, install]);
 
   return (
@@ -60,6 +71,8 @@ export default function App() {
         title="Nyxen - EPUB Reader"
         allow="fullscreen"
         onLoad={() => {
+          swUpdateCoordinator.setIframeElement(iframeRef.current);
+          swUpdateCoordinator.notifyIframeLoad();
           try {
             iframeRef.current?.contentWindow?.postMessage(
               {

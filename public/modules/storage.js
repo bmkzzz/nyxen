@@ -64,6 +64,212 @@
   const deletedBookIdsInSession = new Set();
   let pendingAssetCleanupsRam = {};
 
+  // Subfase 3C: rastreo de quiescencia, época de mutación y barrera persistente commitHold
+  let mutationEpoch = 0;
+  let activePendingWriteCalls = 0;
+  let activeBulkOperations = 0;
+  const activeReadwriteTxs = new Set();
+  const quiescenceWaiters = new Set();
+  let commitHoldState = {
+    active: false,
+    token: null,
+    reason: null,
+    startedAt: 0
+  };
+
+  function getMutationEpoch() {
+    return mutationEpoch;
+  }
+
+  function bumpMutationEpoch() {
+    mutationEpoch++;
+    return mutationEpoch;
+  }
+
+  function isCommitHoldActive() {
+    return Boolean(commitHoldState.active);
+  }
+
+  function getCommitHoldState() {
+    return { ...commitHoldState };
+  }
+
+  function buildCommitBlockedResult(extra = {}) {
+    return {
+      ok: false,
+      persistedToIdb: false,
+      persistedToMemory: false,
+      writtenToIdb: false,
+      skipped: false,
+      blockedByCommitHold: true,
+      reason: "commit-hold-active",
+      holdToken: commitHoldState.token || null,
+      ...extra
+    };
+  }
+
+  function isQuiescent() {
+    return (
+      activePendingWriteCalls === 0 &&
+      activeBulkOperations === 0 &&
+      activeReadwriteTxs.size === 0 &&
+      bookWriteQueues.size === 0
+    );
+  }
+
+  function getPendingWorkSummary() {
+    return {
+      mutationEpoch,
+      activePendingWriteCalls,
+      activeBulkOperations,
+      activeReadwriteTxCount: activeReadwriteTxs.size,
+      activeBookWriteQueues: bookWriteQueues.size,
+      pendingRecoveryPatchesCount: pendingRecoveryProgressPatches.size,
+      commitHold: getCommitHoldState(),
+      quiescent: isQuiescent()
+    };
+  }
+
+  function notifyQuiescenceWaiters() {
+    if (!isQuiescent() || quiescenceWaiters.size === 0) return;
+    const listeners = Array.from(quiescenceWaiters);
+    for (let i = 0; i < listeners.length; i++) {
+      try { listeners[i](); } catch (e) {}
+    }
+  }
+
+  function trackReadwriteTx(tx) {
+    if (!tx) return () => {};
+    activeReadwriteTxs.add(tx);
+    let cleaned = false;
+    return () => {
+      if (cleaned) return;
+      cleaned = true;
+      if (activeReadwriteTxs.delete(tx)) {
+        notifyQuiescenceWaiters();
+      }
+    };
+  }
+
+  function runTrackedWrite(asyncFn, options = {}) {
+    const isBulk = Boolean(options && options.bulk);
+    bumpMutationEpoch();
+    activePendingWriteCalls++;
+    if (isBulk) activeBulkOperations++;
+
+    const execute = async () => {
+      try {
+        return await asyncFn();
+      } finally {
+        if (isBulk) activeBulkOperations = Math.max(0, activeBulkOperations - 1);
+        activePendingWriteCalls = Math.max(0, activePendingWriteCalls - 1);
+        notifyQuiescenceWaiters();
+      }
+    };
+    return execute();
+  }
+
+  function waitForQuiescence(options = {}) {
+    const timeoutMs = typeof options.timeoutMs === "number" && Number.isFinite(options.timeoutMs)
+      ? Math.max(0, options.timeoutMs)
+      : 4000;
+    const shouldAbort = typeof options.shouldAbort === "function" ? options.shouldAbort : null;
+
+    if (isQuiescent()) {
+      return Promise.resolve({
+        quiescent: true,
+        timedOut: false,
+        aborted: false,
+        mutationEpoch,
+        summary: getPendingWorkSummary()
+      });
+    }
+    if (shouldAbort && shouldAbort()) {
+      return Promise.resolve({
+        quiescent: false,
+        timedOut: false,
+        aborted: true,
+        mutationEpoch,
+        summary: getPendingWorkSummary()
+      });
+    }
+
+    return new Promise((resolve) => {
+      let settled = false;
+      let timer = null;
+      let poll = null;
+
+      const finish = (timedOut, aborted) => {
+        if (settled) return;
+        settled = true;
+        quiescenceWaiters.delete(onNotify);
+        if (timer) clearTimeout(timer);
+        if (poll) clearInterval(poll);
+        resolve({
+          quiescent: isQuiescent(),
+          timedOut: Boolean(timedOut),
+          aborted: Boolean(aborted),
+          mutationEpoch,
+          summary: getPendingWorkSummary()
+        });
+      };
+
+      const onNotify = () => {
+        if (isQuiescent()) {
+          finish(false, false);
+        } else if (shouldAbort && shouldAbort()) {
+          finish(false, true);
+        }
+      };
+
+      quiescenceWaiters.add(onNotify);
+      if (shouldAbort) {
+        poll = setInterval(() => {
+          if (isQuiescent()) finish(false, false);
+          else if (shouldAbort()) finish(false, true);
+        }, 50);
+      }
+      timer = setTimeout(() => {
+        finish(!isQuiescent(), false);
+      }, timeoutMs);
+    });
+  }
+
+  function enterCommitHold(options = {}) {
+    const token = options && typeof options.token === "string" && options.token.length > 0
+      ? options.token
+      : (options && options.token !== undefined && options.token !== null ? String(options.token) : null);
+    const reason = options && typeof options.reason === "string" && options.reason.length > 0
+      ? options.reason
+      : "sw-commit";
+    commitHoldState = {
+      active: true,
+      token,
+      reason,
+      startedAt: Date.now()
+    };
+    return getCommitHoldState();
+  }
+
+  function releaseCommitHold(expectedToken) {
+    if (commitHoldState.active !== true) {
+      return { released: false, reason: "not-active" };
+    }
+    if (typeof expectedToken !== "string" || expectedToken.length === 0) {
+      return { released: false, reason: "invalid-token" };
+    }
+    if (commitHoldState.token !== expectedToken) {
+      return { released: false, reason: "token-mismatch" };
+    }
+    commitHoldState = {
+      active: false,
+      token: null,
+      reason: null,
+      startedAt: 0
+    };
+    return { released: true, reason: null };
+  }
+
   // UI & state integration hooks configured by the host application
   const hooks = {
     onQuotaExceeded: null,
@@ -658,61 +864,83 @@
   }
 
   async function dbSaveStrictIdb(storeName, item) {
-    let conn = await ensureDb();
-    if (!conn) {
-      putInMemoryStore(storeName, item);
-      return { ok: true, persistedToIdb: false, persistedToMemory: true, error: null };
+    if (isCommitHoldActive()) {
+      return buildCommitBlockedResult({ error: null });
     }
+    return runTrackedWrite(async () => {
+      if (isCommitHoldActive()) {
+        return buildCommitBlockedResult({ error: null });
+      }
+      let conn = await ensureDb();
+      if (isCommitHoldActive()) {
+        return buildCommitBlockedResult({ error: null });
+      }
+      if (!conn) {
+        putInMemoryStore(storeName, item);
+        return { ok: true, persistedToIdb: false, persistedToMemory: true, error: null };
+      }
 
-    const attempt = (targetConn) => new Promise((resolve) => {
-      let settled = false;
-      const finish = (res) => {
-        if (settled) return;
-        settled = true;
-        resolve(res);
+      const attempt = (targetConn) => new Promise((resolve) => {
+        let settled = false;
+        let untrackTx = () => {};
+        const finish = (res) => {
+          if (settled) return;
+          settled = true;
+          untrackTx();
+          resolve(res);
+        };
+        if (isCommitHoldActive()) {
+          finish(buildCommitBlockedResult({ retryableInvalidState: false, error: null }));
+          return;
+        }
+        try {
+          const tx = targetConn.transaction(storeName, "readwrite");
+          untrackTx = trackReadwriteTx(tx);
+          tx.objectStore(storeName).put(item);
+          tx.oncomplete = () => {
+            putInMemoryStore(storeName, item);
+            finish({ ok: true, persistedToIdb: true, persistedToMemory: false, retryableInvalidState: false, error: null });
+          };
+          tx.onerror = (ev) => {
+            const err = tx.error || ev?.target?.error || null;
+            if (isQuotaError(err)) notifyQuotaExceeded();
+            const retryable = handleTransactionFailureAndMaybeReset(targetConn, err);
+            finish({ ok: false, persistedToIdb: false, persistedToMemory: false, retryableInvalidState: retryable, error: err });
+          };
+          tx.onabort = () => {
+            const err = tx.error || null;
+            if (isQuotaError(err)) notifyQuotaExceeded();
+            const retryable = handleTransactionFailureAndMaybeReset(targetConn, err);
+            finish({ ok: false, persistedToIdb: false, persistedToMemory: false, retryableInvalidState: retryable, error: err });
+          };
+        } catch (e) {
+          const retryable = handleTransactionFailureAndMaybeReset(targetConn, e);
+          finish({ ok: false, persistedToIdb: false, persistedToMemory: false, retryableInvalidState: retryable, error: e });
+        }
+      });
+
+      let res = await attempt(conn);
+      if (!res.ok && !res.blockedByCommitHold && res.retryableInvalidState && !isCommitHoldActive()) {
+        resetRetryCooldown();
+        conn = await ensureDb();
+        if (conn && !isCommitHoldActive()) {
+          res = await attempt(conn);
+        }
+      }
+      if (res.blockedByCommitHold) {
+        return buildCommitBlockedResult({ error: null });
+      }
+      return {
+        ok: Boolean(res.ok),
+        persistedToIdb: Boolean(res.persistedToIdb),
+        persistedToMemory: Boolean(res.persistedToMemory),
+        error: res.error || null
       };
-      try {
-        const tx = targetConn.transaction(storeName, "readwrite");
-        tx.objectStore(storeName).put(item);
-        tx.oncomplete = () => {
-          putInMemoryStore(storeName, item);
-          finish({ ok: true, persistedToIdb: true, persistedToMemory: false, retryableInvalidState: false, error: null });
-        };
-        tx.onerror = (ev) => {
-          const err = tx.error || ev?.target?.error || null;
-          if (isQuotaError(err)) notifyQuotaExceeded();
-          const retryable = handleTransactionFailureAndMaybeReset(targetConn, err);
-          finish({ ok: false, persistedToIdb: false, persistedToMemory: false, retryableInvalidState: retryable, error: err });
-        };
-        tx.onabort = () => {
-          const err = tx.error || null;
-          if (isQuotaError(err)) notifyQuotaExceeded();
-          const retryable = handleTransactionFailureAndMaybeReset(targetConn, err);
-          finish({ ok: false, persistedToIdb: false, persistedToMemory: false, retryableInvalidState: retryable, error: err });
-        };
-      } catch (e) {
-        const retryable = handleTransactionFailureAndMaybeReset(targetConn, e);
-        finish({ ok: false, persistedToIdb: false, persistedToMemory: false, retryableInvalidState: retryable, error: e });
-      }
     });
-
-    let res = await attempt(conn);
-    if (!res.ok && res.retryableInvalidState) {
-      resetRetryCooldown();
-      conn = await ensureDb();
-      if (conn) {
-        res = await attempt(conn);
-      }
-    }
-    return {
-      ok: Boolean(res.ok),
-      persistedToIdb: Boolean(res.persistedToIdb),
-      persistedToMemory: Boolean(res.persistedToMemory),
-      error: res.error || null
-    };
   }
 
   async function dbSave(storeName, item) {
+    if (isCommitHoldActive()) return false;
     const res = await dbSaveStrictIdb(storeName, item);
     return Boolean(res.ok);
   }
@@ -915,198 +1143,261 @@
   }
 
   async function dbClear(storeName) {
-    if (storeName === "books") {
-      libraryClearEpoch++;
-      bumpAllTrackedBookGenerations();
-      const pendingQueues = Array.from(bookWriteQueues.values());
-      if (pendingQueues.length > 0) {
-        await Promise.allSettled(pendingQueues);
-      }
+    if (isCommitHoldActive()) {
+      return buildCommitBlockedResult({ error: null });
     }
-
-    let conn = await ensureDb();
-    if (!conn) {
-      inMemoryDb[storeName] = [];
+    return runTrackedWrite(async () => {
+      if (isCommitHoldActive()) {
+        return buildCommitBlockedResult({ error: null });
+      }
       if (storeName === "books") {
-        // Solo RAM temporal: limpiar estado de sesión RAM, pero NO borrar espejos localStorage
-        // ni pendingAssetCleanups porque IndexedDB en disco no fue vaciado.
-        knownDiskRevisionByBook.clear();
-        knownDiskStateByBook.clear();
-        bookInstanceIdByBook.clear();
-        bookSeqCounters.clear();
-        pendingRecoveryProgressPatches.clear();
-        deletedBookIdsInSession.clear();
-      } else if (storeName === "settings") {
-        pendingAssetCleanupsRam = {};
+        libraryClearEpoch++;
+        bumpAllTrackedBookGenerations();
+        const pendingQueues = Array.from(bookWriteQueues.values());
+        if (pendingQueues.length > 0) {
+          await Promise.allSettled(pendingQueues);
+        }
       }
-      return { ok: true, persistedToIdb: false, persistedToMemory: true, error: null };
-    }
+      if (isCommitHoldActive()) {
+        return buildCommitBlockedResult({ error: null });
+      }
 
-    const attempt = (targetConn) => new Promise((resolve) => {
-      let settled = false;
-      const finish = (res) => {
-        if (settled) return;
-        settled = true;
-        resolve(res);
+      let conn = await ensureDb();
+      if (isCommitHoldActive()) {
+        return buildCommitBlockedResult({ error: null });
+      }
+      if (!conn) {
+        inMemoryDb[storeName] = [];
+        if (storeName === "books") {
+          // Solo RAM temporal: limpiar estado de sesión RAM, pero NO borrar espejos localStorage
+          // ni pendingAssetCleanups porque IndexedDB en disco no fue vaciado.
+          knownDiskRevisionByBook.clear();
+          knownDiskStateByBook.clear();
+          bookInstanceIdByBook.clear();
+          bookSeqCounters.clear();
+          pendingRecoveryProgressPatches.clear();
+          deletedBookIdsInSession.clear();
+        } else if (storeName === "settings") {
+          pendingAssetCleanupsRam = {};
+        }
+        return { ok: true, persistedToIdb: false, persistedToMemory: true, error: null };
+      }
+
+      const attempt = (targetConn) => new Promise((resolve) => {
+        let settled = false;
+        let untrackTx = () => {};
+        const finish = (res) => {
+          if (settled) return;
+          settled = true;
+          untrackTx();
+          resolve(res);
+        };
+        if (isCommitHoldActive()) {
+          finish(buildCommitBlockedResult({ retryableInvalidState: false, error: null }));
+          return;
+        }
+        try {
+          const tx = targetConn.transaction(storeName, "readwrite");
+          untrackTx = trackReadwriteTx(tx);
+          tx.objectStore(storeName).clear();
+          tx.oncomplete = () => finish({ ok: true, persistedToIdb: true, persistedToMemory: false, retryableInvalidState: false, error: null });
+          tx.onerror = (ev) => {
+            const err = tx.error || ev?.target?.error || null;
+            const retryable = handleTransactionFailureAndMaybeReset(targetConn, err);
+            finish({ ok: false, persistedToIdb: false, persistedToMemory: false, retryableInvalidState: retryable, error: err });
+          };
+          tx.onabort = () => {
+            const err = tx.error || null;
+            const retryable = handleTransactionFailureAndMaybeReset(targetConn, err);
+            finish({ ok: false, persistedToIdb: false, persistedToMemory: false, retryableInvalidState: retryable, error: err });
+          };
+        } catch (e) {
+          const retryable = handleTransactionFailureAndMaybeReset(targetConn, e);
+          finish({ ok: false, persistedToIdb: false, persistedToMemory: false, retryableInvalidState: retryable, error: e });
+        }
+      });
+
+      let res = await attempt(conn);
+      if (!res.ok && !res.blockedByCommitHold && res.retryableInvalidState && !isCommitHoldActive()) {
+        resetRetryCooldown();
+        conn = await ensureDb();
+        if (conn && !isCommitHoldActive()) {
+          res = await attempt(conn);
+        }
+      }
+      if (res.blockedByCommitHold) {
+        return buildCommitBlockedResult({ error: null });
+      }
+
+      if (res.ok && res.persistedToIdb) {
+        inMemoryDb[storeName] = [];
+        if (storeName === "books") {
+          knownDiskRevisionByBook.clear();
+          knownDiskStateByBook.clear();
+          bookInstanceIdByBook.clear();
+          bookSeqCounters.clear();
+          pendingRecoveryProgressPatches.clear();
+          deletedBookIdsInSession.clear();
+          clearAllProgressMirrors();
+          // NO eliminar pendingAssetCleanups aquí: los recursos asociados (bookContents/bookAssets/settings)
+          // solo pueden considerarse limpios cuando sus propios stores confirmen vaciado en IDB.
+        } else if (storeName === "bookContents" || storeName === "bookAssets") {
+          if (!isCommitHoldActive()) {
+            await prunePendingCleanupsAfterConfirmedStoreMutation(storeName, null);
+          }
+        } else if (storeName === "settings") {
+          pendingAssetCleanupsRam = {};
+        }
+      }
+
+      return {
+        ok: Boolean(res.ok),
+        persistedToIdb: Boolean(res.persistedToIdb),
+        persistedToMemory: Boolean(res.persistedToMemory),
+        error: res.error || null
       };
-      try {
-        const tx = targetConn.transaction(storeName, "readwrite");
-        tx.objectStore(storeName).clear();
-        tx.oncomplete = () => finish({ ok: true, persistedToIdb: true, persistedToMemory: false, retryableInvalidState: false, error: null });
-        tx.onerror = (ev) => {
-          const err = tx.error || ev?.target?.error || null;
-          const retryable = handleTransactionFailureAndMaybeReset(targetConn, err);
-          finish({ ok: false, persistedToIdb: false, persistedToMemory: false, retryableInvalidState: retryable, error: err });
-        };
-        tx.onabort = () => {
-          const err = tx.error || null;
-          const retryable = handleTransactionFailureAndMaybeReset(targetConn, err);
-          finish({ ok: false, persistedToIdb: false, persistedToMemory: false, retryableInvalidState: retryable, error: err });
-        };
-      } catch (e) {
-        const retryable = handleTransactionFailureAndMaybeReset(targetConn, e);
-        finish({ ok: false, persistedToIdb: false, persistedToMemory: false, retryableInvalidState: retryable, error: e });
-      }
-    });
-
-    let res = await attempt(conn);
-    if (!res.ok && res.retryableInvalidState) {
-      resetRetryCooldown();
-      conn = await ensureDb();
-      if (conn) {
-        res = await attempt(conn);
-      }
-    }
-
-    if (res.ok && res.persistedToIdb) {
-      inMemoryDb[storeName] = [];
-      if (storeName === "books") {
-        knownDiskRevisionByBook.clear();
-        knownDiskStateByBook.clear();
-        bookInstanceIdByBook.clear();
-        bookSeqCounters.clear();
-        pendingRecoveryProgressPatches.clear();
-        deletedBookIdsInSession.clear();
-        clearAllProgressMirrors();
-        // NO eliminar pendingAssetCleanups aquí: los recursos asociados (bookContents/bookAssets/settings)
-        // solo pueden considerarse limpios cuando sus propios stores confirmen vaciado en IDB.
-      } else if (storeName === "bookContents" || storeName === "bookAssets") {
-        await prunePendingCleanupsAfterConfirmedStoreMutation(storeName, null);
-      } else if (storeName === "settings") {
-        pendingAssetCleanupsRam = {};
-      }
-    }
-
-    return {
-      ok: Boolean(res.ok),
-      persistedToIdb: Boolean(res.persistedToIdb),
-      persistedToMemory: Boolean(res.persistedToMemory),
-      error: res.error || null
-    };
+    }, { bulk: true });
   }
 
   async function dbDelete(storeName, key, options = {}) {
-    const keyProp = STORE_KEY_PATHS[storeName] || "key";
-    let conn = await ensureDb();
-    if (!conn) {
-      if (inMemoryDb[storeName]) {
-        inMemoryDb[storeName] = inMemoryDb[storeName].filter(x => x && x[keyProp] !== key);
-      }
-      return { ok: true, persistedToIdb: false, persistedToMemory: true, error: null };
+    if (isCommitHoldActive()) {
+      return buildCommitBlockedResult({ error: null });
     }
+    return runTrackedWrite(async () => {
+      if (isCommitHoldActive()) {
+        return buildCommitBlockedResult({ error: null });
+      }
+      const keyProp = STORE_KEY_PATHS[storeName] || "key";
+      let conn = await ensureDb();
+      if (isCommitHoldActive()) {
+        return buildCommitBlockedResult({ error: null });
+      }
+      if (!conn) {
+        if (inMemoryDb[storeName]) {
+          inMemoryDb[storeName] = inMemoryDb[storeName].filter(x => x && x[keyProp] !== key);
+        }
+        return { ok: true, persistedToIdb: false, persistedToMemory: true, error: null };
+      }
 
-    const attempt = (targetConn) => new Promise((resolve) => {
-      let settled = false;
-      const finish = (res) => {
-        if (settled) return;
-        settled = true;
-        resolve(res);
+      const attempt = (targetConn) => new Promise((resolve) => {
+        let settled = false;
+        let untrackTx = () => {};
+        const finish = (res) => {
+          if (settled) return;
+          settled = true;
+          untrackTx();
+          resolve(res);
+        };
+        if (isCommitHoldActive()) {
+          finish(buildCommitBlockedResult({ retryableInvalidState: false, error: null }));
+          return;
+        }
+        try {
+          const tx = targetConn.transaction(storeName, "readwrite");
+          untrackTx = trackReadwriteTx(tx);
+          tx.objectStore(storeName).delete(key);
+          tx.oncomplete = () => finish({ ok: true, persistedToIdb: true, persistedToMemory: false, retryableInvalidState: false, error: null });
+          tx.onerror = (ev) => {
+            const err = tx.error || ev?.target?.error || null;
+            const retryable = handleTransactionFailureAndMaybeReset(targetConn, err);
+            finish({ ok: false, persistedToIdb: false, persistedToMemory: false, retryableInvalidState: retryable, error: err });
+          };
+          tx.onabort = () => {
+            const err = tx.error || null;
+            const retryable = handleTransactionFailureAndMaybeReset(targetConn, err);
+            finish({ ok: false, persistedToIdb: false, persistedToMemory: false, retryableInvalidState: retryable, error: err });
+          };
+        } catch (e) {
+          const retryable = handleTransactionFailureAndMaybeReset(targetConn, e);
+          finish({ ok: false, persistedToIdb: false, persistedToMemory: false, retryableInvalidState: retryable, error: e });
+        }
+      });
+
+      let res = await attempt(conn);
+      if (!res.ok && !res.blockedByCommitHold && res.retryableInvalidState && !isCommitHoldActive()) {
+        resetRetryCooldown();
+        conn = await ensureDb();
+        if (conn && !isCommitHoldActive()) {
+          res = await attempt(conn);
+        }
+      }
+      if (res.blockedByCommitHold) {
+        return buildCommitBlockedResult({ error: null });
+      }
+
+      if (res.ok && res.persistedToIdb) {
+        if (inMemoryDb[storeName]) {
+          inMemoryDb[storeName] = inMemoryDb[storeName].filter(x => x && x[keyProp] !== key);
+        }
+        if (!isCommitHoldActive() && !options.skipCleanupPrune && (storeName === "bookContents" || storeName === "bookAssets" || storeName === "settings") && key !== PENDING_CLEANUPS_KEY) {
+          await prunePendingCleanupsAfterConfirmedStoreMutation(storeName, new Set([key]));
+        }
+      }
+
+      return {
+        ok: Boolean(res.ok),
+        persistedToIdb: Boolean(res.persistedToIdb),
+        persistedToMemory: Boolean(res.persistedToMemory),
+        error: res.error || null
       };
-      try {
-        const tx = targetConn.transaction(storeName, "readwrite");
-        tx.objectStore(storeName).delete(key);
-        tx.oncomplete = () => finish({ ok: true, persistedToIdb: true, persistedToMemory: false, retryableInvalidState: false, error: null });
-        tx.onerror = (ev) => {
-          const err = tx.error || ev?.target?.error || null;
-          const retryable = handleTransactionFailureAndMaybeReset(targetConn, err);
-          finish({ ok: false, persistedToIdb: false, persistedToMemory: false, retryableInvalidState: retryable, error: err });
-        };
-        tx.onabort = () => {
-          const err = tx.error || null;
-          const retryable = handleTransactionFailureAndMaybeReset(targetConn, err);
-          finish({ ok: false, persistedToIdb: false, persistedToMemory: false, retryableInvalidState: retryable, error: err });
-        };
-      } catch (e) {
-        const retryable = handleTransactionFailureAndMaybeReset(targetConn, e);
-        finish({ ok: false, persistedToIdb: false, persistedToMemory: false, retryableInvalidState: retryable, error: e });
-      }
     });
-
-    let res = await attempt(conn);
-    if (!res.ok && res.retryableInvalidState) {
-      resetRetryCooldown();
-      conn = await ensureDb();
-      if (conn) {
-        res = await attempt(conn);
-      }
-    }
-
-    if (res.ok && res.persistedToIdb) {
-      if (inMemoryDb[storeName]) {
-        inMemoryDb[storeName] = inMemoryDb[storeName].filter(x => x && x[keyProp] !== key);
-      }
-      if (!options.skipCleanupPrune && (storeName === "bookContents" || storeName === "bookAssets" || storeName === "settings") && key !== PENDING_CLEANUPS_KEY) {
-        await prunePendingCleanupsAfterConfirmedStoreMutation(storeName, new Set([key]));
-      }
-    }
-
-    return {
-      ok: Boolean(res.ok),
-      persistedToIdb: Boolean(res.persistedToIdb),
-      persistedToMemory: Boolean(res.persistedToMemory),
-      error: res.error || null
-    };
   }
 
   async function dbSaveBatch(storeName, items, batchSize = 25) {
+    if (isCommitHoldActive()) return false;
     if (!Array.isArray(items) || items.length === 0) return true;
-    const conn = await ensureDb();
-    if (!conn) {
-      for (let i = 0; i < items.length; i++) {
-        if (items[i]) putInMemoryStore(storeName, items[i]);
-      }
-      return true;
-    }
-    let allOk = true;
-    for (let i = 0; i < items.length; i += batchSize) {
-      const chunk = items.slice(i, i + batchSize);
-      const ok = await new Promise((resolve) => {
-        let settled = false;
-        const finish = (val, err) => {
-          if (settled) return;
-          settled = true;
-          if (!val && isQuotaError(err)) notifyQuotaExceeded();
-          resolve(val);
-        };
-        try {
-          const tx = conn.transaction(storeName, "readwrite");
-          const store = tx.objectStore(storeName);
-          for (let j = 0; j < chunk.length; j++) {
-            if (chunk[j]) store.put(chunk[j]);
-          }
-          tx.oncomplete = () => finish(true);
-          tx.onerror = (ev) => finish(false, tx.error || ev?.target?.error);
-          tx.onabort = () => finish(false, tx.error);
-        } catch (e) {
-          finish(false);
+    return runTrackedWrite(async () => {
+      if (isCommitHoldActive()) return false;
+      const conn = await ensureDb();
+      if (isCommitHoldActive()) return false;
+      if (!conn) {
+        for (let i = 0; i < items.length; i++) {
+          if (items[i]) putInMemoryStore(storeName, items[i]);
         }
-      });
-      if (!ok) allOk = false;
-      if (i + batchSize < items.length) {
-        await new Promise(r => setTimeout(r, 0));
+        return true;
       }
-    }
-    return allOk;
+      let allOk = true;
+      for (let i = 0; i < items.length; i += batchSize) {
+        if (isCommitHoldActive()) {
+          allOk = false;
+          break;
+        }
+        const chunk = items.slice(i, i + batchSize);
+        const ok = await new Promise((resolve) => {
+          let settled = false;
+          let untrackTx = () => {};
+          const finish = (val, err) => {
+            if (settled) return;
+            settled = true;
+            untrackTx();
+            if (!val && isQuotaError(err)) notifyQuotaExceeded();
+            resolve(val);
+          };
+          if (isCommitHoldActive()) {
+            finish(false, null);
+            return;
+          }
+          try {
+            const tx = conn.transaction(storeName, "readwrite");
+            untrackTx = trackReadwriteTx(tx);
+            const store = tx.objectStore(storeName);
+            for (let j = 0; j < chunk.length; j++) {
+              if (chunk[j]) store.put(chunk[j]);
+            }
+            tx.oncomplete = () => finish(true);
+            tx.onerror = (ev) => finish(false, tx.error || ev?.target?.error);
+            tx.onabort = () => finish(false, tx.error);
+          } catch (e) {
+            finish(false);
+          }
+        });
+        if (!ok) allOk = false;
+        if (i + batchSize < items.length) {
+          await new Promise(r => setTimeout(r, 0));
+        }
+      }
+      return allOk;
+    }, { bulk: true });
   }
 
   async function dbGetBatch(storeName, keys) {
@@ -1141,6 +1432,13 @@
   }
 
   async function dbDeleteBatch(storeName, keys, batchSize = 40, options = {}) {
+    if (isCommitHoldActive()) {
+      return buildCommitBlockedResult({
+        deletedCount: 0,
+        failedKeys: Array.isArray(keys) ? keys.slice() : [],
+        error: null
+      });
+    }
     if (!Array.isArray(keys) || keys.length === 0) {
       return {
         ok: true,
@@ -1172,117 +1470,164 @@
       };
     }
 
-    const keyProp = STORE_KEY_PATHS[storeName] || "key";
-    let conn = await ensureDb();
-    if (!conn) {
-      if (inMemoryDb[storeName]) {
-        const delSet = new Set(uniqueKeys);
-        inMemoryDb[storeName] = inMemoryDb[storeName].filter(x => x && !delSet.has(x[keyProp]));
+    return runTrackedWrite(async () => {
+      if (isCommitHoldActive()) {
+        return buildCommitBlockedResult({
+          deletedCount: 0,
+          failedKeys: uniqueKeys.slice(),
+          error: null
+        });
       }
-      return {
-        ok: true,
-        persistedToIdb: false,
-        persistedToMemory: true,
-        deletedCount: uniqueKeys.length,
-        failedKeys: [],
-        error: null
-      };
-    }
-
-    const runChunk = (targetConn, chunk) => new Promise((resolve) => {
-      let settled = false;
-      const finish = (res) => {
-        if (settled) return;
-        settled = true;
-        resolve(res);
-      };
-      try {
-        const tx = targetConn.transaction(storeName, "readwrite");
-        const store = tx.objectStore(storeName);
-        for (let j = 0; j < chunk.length; j++) {
-          store.delete(chunk[j]);
-        }
-        tx.oncomplete = () => finish({ ok: true, retryableInvalidState: false, error: null });
-        tx.onerror = (ev) => {
-          const err = tx.error || ev?.target?.error || null;
-          const retryable = handleTransactionFailureAndMaybeReset(targetConn, err);
-          finish({ ok: false, retryableInvalidState: retryable, error: err });
-        };
-        tx.onabort = () => {
-          const err = tx.error || null;
-          const retryable = handleTransactionFailureAndMaybeReset(targetConn, err);
-          finish({ ok: false, retryableInvalidState: retryable, error: err });
-        };
-      } catch (e) {
-        const retryable = handleTransactionFailureAndMaybeReset(targetConn, e);
-        finish({ ok: false, retryableInvalidState: retryable, error: e });
+      const keyProp = STORE_KEY_PATHS[storeName] || "key";
+      let conn = await ensureDb();
+      if (isCommitHoldActive()) {
+        return buildCommitBlockedResult({
+          deletedCount: 0,
+          failedKeys: uniqueKeys.slice(),
+          error: null
+        });
       }
-    });
-
-    let deletedCount = 0;
-    const confirmedKeys = [];
-    const failedKeys = [];
-    let firstError = null;
-    const step = Math.max(1, batchSize || 40);
-
-    for (let i = 0; i < uniqueKeys.length; i += step) {
-      const chunk = uniqueKeys.slice(i, i + step);
-      let activeConn = conn || await ensureDb();
-      if (!activeConn) {
-        if (!firstError) firstError = new Error("IndexedDB connection lost during batch delete");
-        for (let k = 0; k < chunk.length; k++) failedKeys.push(chunk[k]);
-        continue;
-      }
-
-      let chunkRes = await runChunk(activeConn, chunk);
-      if (!chunkRes.ok && chunkRes.retryableInvalidState) {
-        resetRetryCooldown();
-        activeConn = await ensureDb();
-        conn = activeConn;
-        if (activeConn) {
-          chunkRes = await runChunk(activeConn, chunk);
-        }
-      }
-
-      if (chunkRes.ok) {
+      if (!conn) {
         if (inMemoryDb[storeName]) {
-          const chunkSet = new Set(chunk);
-          inMemoryDb[storeName] = inMemoryDb[storeName].filter(x => x && !chunkSet.has(x[keyProp]));
+          const delSet = new Set(uniqueKeys);
+          inMemoryDb[storeName] = inMemoryDb[storeName].filter(x => x && !delSet.has(x[keyProp]));
         }
-        deletedCount += chunk.length;
-        for (let k = 0; k < chunk.length; k++) confirmedKeys.push(chunk[k]);
-      } else {
-        if (!firstError && chunkRes.error) firstError = chunkRes.error;
-        for (let k = 0; k < chunk.length; k++) failedKeys.push(chunk[k]);
+        return {
+          ok: true,
+          persistedToIdb: false,
+          persistedToMemory: true,
+          deletedCount: uniqueKeys.length,
+          failedKeys: [],
+          error: null
+        };
       }
-    }
 
-    if (!options.skipCleanupPrune && confirmedKeys.length > 0 && (storeName === "bookContents" || storeName === "bookAssets" || storeName === "settings")) {
-      const confirmedSet = new Set(confirmedKeys.filter(k => k !== PENDING_CLEANUPS_KEY));
-      if (confirmedSet.size > 0) {
-        await prunePendingCleanupsAfterConfirmedStoreMutation(storeName, confirmedSet);
+      const runChunk = (targetConn, chunk) => new Promise((resolve) => {
+        let settled = false;
+        let untrackTx = () => {};
+        const finish = (res) => {
+          if (settled) return;
+          settled = true;
+          untrackTx();
+          resolve(res);
+        };
+        if (isCommitHoldActive()) {
+          finish(buildCommitBlockedResult({ retryableInvalidState: false, error: null }));
+          return;
+        }
+        try {
+          const tx = targetConn.transaction(storeName, "readwrite");
+          untrackTx = trackReadwriteTx(tx);
+          const store = tx.objectStore(storeName);
+          for (let j = 0; j < chunk.length; j++) {
+            store.delete(chunk[j]);
+          }
+          tx.oncomplete = () => finish({ ok: true, retryableInvalidState: false, error: null });
+          tx.onerror = (ev) => {
+            const err = tx.error || ev?.target?.error || null;
+            const retryable = handleTransactionFailureAndMaybeReset(targetConn, err);
+            finish({ ok: false, retryableInvalidState: retryable, error: err });
+          };
+          tx.onabort = () => {
+            const err = tx.error || null;
+            const retryable = handleTransactionFailureAndMaybeReset(targetConn, err);
+            finish({ ok: false, retryableInvalidState: retryable, error: err });
+          };
+        } catch (e) {
+          const retryable = handleTransactionFailureAndMaybeReset(targetConn, e);
+          finish({ ok: false, retryableInvalidState: retryable, error: e });
+        }
+      });
+
+      let deletedCount = 0;
+      const confirmedKeys = [];
+      const failedKeys = [];
+      let firstError = null;
+      let blockedEncountered = false;
+      const step = Math.max(1, batchSize || 40);
+
+      for (let i = 0; i < uniqueKeys.length; i += step) {
+        const chunk = uniqueKeys.slice(i, i + step);
+        if (isCommitHoldActive()) {
+          blockedEncountered = true;
+          for (let k = 0; k < chunk.length; k++) failedKeys.push(chunk[k]);
+          continue;
+        }
+        let activeConn = conn || await ensureDb();
+        if (isCommitHoldActive()) {
+          blockedEncountered = true;
+          for (let k = 0; k < chunk.length; k++) failedKeys.push(chunk[k]);
+          continue;
+        }
+        if (!activeConn) {
+          if (!firstError) firstError = new Error("IndexedDB connection lost during batch delete");
+          for (let k = 0; k < chunk.length; k++) failedKeys.push(chunk[k]);
+          continue;
+        }
+
+        let chunkRes = await runChunk(activeConn, chunk);
+        if (!chunkRes.ok && !chunkRes.blockedByCommitHold && chunkRes.retryableInvalidState && !isCommitHoldActive()) {
+          resetRetryCooldown();
+          activeConn = await ensureDb();
+          conn = activeConn;
+          if (activeConn && !isCommitHoldActive()) {
+            chunkRes = await runChunk(activeConn, chunk);
+          }
+        }
+        if (chunkRes.blockedByCommitHold) {
+          blockedEncountered = true;
+          for (let k = 0; k < chunk.length; k++) failedKeys.push(chunk[k]);
+          continue;
+        }
+
+        if (chunkRes.ok) {
+          if (inMemoryDb[storeName]) {
+            const chunkSet = new Set(chunk);
+            inMemoryDb[storeName] = inMemoryDb[storeName].filter(x => x && !chunkSet.has(x[keyProp]));
+          }
+          deletedCount += chunk.length;
+          for (let k = 0; k < chunk.length; k++) confirmedKeys.push(chunk[k]);
+        } else {
+          if (!firstError && chunkRes.error) firstError = chunkRes.error;
+          for (let k = 0; k < chunk.length; k++) failedKeys.push(chunk[k]);
+        }
       }
-    }
 
-    if (failedKeys.length === 0) {
+      if (!isCommitHoldActive() && !options.skipCleanupPrune && confirmedKeys.length > 0 && (storeName === "bookContents" || storeName === "bookAssets" || storeName === "settings")) {
+        const confirmedSet = new Set(confirmedKeys.filter(k => k !== PENDING_CLEANUPS_KEY));
+        if (confirmedSet.size > 0) {
+          await prunePendingCleanupsAfterConfirmedStoreMutation(storeName, confirmedSet);
+        }
+      }
+
+      if (blockedEncountered) {
+        return buildCommitBlockedResult({
+          deletedCount,
+          failedKeys,
+          error: firstError || null
+        });
+      }
+
+      if (failedKeys.length === 0) {
+        return {
+          ok: true,
+          persistedToIdb: true,
+          persistedToMemory: false,
+          deletedCount,
+          failedKeys: [],
+          error: null
+        };
+      }
+
       return {
-        ok: true,
-        persistedToIdb: true,
+        ok: false,
+        persistedToIdb: false,
         persistedToMemory: false,
         deletedCount,
-        failedKeys: [],
-        error: null
+        failedKeys,
+        error: firstError || new Error("Partial or failed batch delete in IndexedDB")
       };
-    }
-
-    return {
-      ok: false,
-      persistedToIdb: false,
-      persistedToMemory: false,
-      deletedCount,
-      failedKeys,
-      error: firstError || new Error("Partial or failed batch delete in IndexedDB")
-    };
+    }, { bulk: true });
   }
 
   // Asset / ObjectURL management
@@ -1555,6 +1900,7 @@
     const safeTail = taskPromise.catch(() => {}).finally(() => {
       if (bookWriteQueues.get(bookId) === safeTail) {
         bookWriteQueues.delete(bookId);
+        notifyQuiescenceWaiters();
       }
     });
     bookWriteQueues.set(bookId, safeTail);
@@ -1568,6 +1914,9 @@
    * frente a escritura realmente confirmada mediante store.put() + tx.oncomplete ("persistedToIdb: true").
    */
   async function dbUpdateBookInTransaction(bookId, mergeFn, options = {}) {
+    if (isCommitHoldActive()) {
+      return buildCommitBlockedResult({ record: null });
+    }
     if (!bookId || typeof mergeFn !== "function") {
       return {
         ok: false,
@@ -1580,39 +1929,21 @@
       };
     }
 
-    const capturedGen = options.capturedGen !== undefined ? options.capturedGen : getBookGeneration(bookId);
-    const capturedClearEpoch = options.capturedClearEpoch !== undefined ? options.capturedClearEpoch : libraryClearEpoch;
-    const isStaleGeneration = () => (
-      capturedClearEpoch !== libraryClearEpoch ||
-      capturedGen !== getBookGeneration(bookId)
-    );
-
-    return enqueueBookWrite(bookId, async () => {
-      if (isStaleGeneration()) {
-        return {
-          ok: true,
-          persistedToIdb: false,
-          persistedToMemory: false,
-          writtenToIdb: false,
-          skipped: true,
-          reason: "stale-instance-generation",
-          record: null
-        };
+    return runTrackedWrite(async () => {
+      if (isCommitHoldActive()) {
+        return buildCommitBlockedResult({ record: null });
       }
-      if (deletedBookIdsInSession.has(bookId) && !options.allowCreate) {
-        return {
-          ok: true,
-          persistedToIdb: false,
-          persistedToMemory: false,
-          writtenToIdb: false,
-          skipped: true,
-          reason: "deleted-in-session",
-          record: null
-        };
-      }
+      const capturedGen = options.capturedGen !== undefined ? options.capturedGen : getBookGeneration(bookId);
+      const capturedClearEpoch = options.capturedClearEpoch !== undefined ? options.capturedClearEpoch : libraryClearEpoch;
+      const isStaleGeneration = () => (
+        capturedClearEpoch !== libraryClearEpoch ||
+        capturedGen !== getBookGeneration(bookId)
+      );
 
-      let conn = await ensureDb();
-      if (!conn) {
+      return enqueueBookWrite(bookId, async () => {
+        if (isCommitHoldActive()) {
+          return buildCommitBlockedResult({ record: null });
+        }
         if (isStaleGeneration()) {
           return {
             ok: true,
@@ -1624,112 +1955,194 @@
             record: null
           };
         }
-        // Fallback temporal en RAM (nunca confirma persistedToIdb)
-        const list = inMemoryDb.books || [];
-        const existingMem = list.find(x => x && x.id === bookId) || null;
-        let decision;
-        try {
-          decision = mergeFn(existingMem ? { ...existingMem } : null);
-        } catch (err) {
-          return {
-            ok: false,
-            persistedToIdb: false,
-            persistedToMemory: false,
-            writtenToIdb: false,
-            skipped: false,
-            reason: "merge-error",
-            error: err,
-            record: null
-          };
-        }
-        if (!decision || decision.skip) {
+        if (deletedBookIdsInSession.has(bookId) && !options.allowCreate) {
           return {
             ok: true,
             persistedToIdb: false,
             persistedToMemory: false,
             writtenToIdb: false,
             skipped: true,
-            reason: (decision && decision.reason) || "skipped",
-            record: (decision && decision.record) || existingMem
+            reason: "deleted-in-session",
+            record: null
           };
         }
-        if (decision.record) {
-          putInMemoryStore("books", decision.record);
-          syncBookCachesAfterCommit(decision.record, options);
+
+        let conn = await ensureDb();
+        if (isCommitHoldActive()) {
+          return buildCommitBlockedResult({ record: null });
         }
-        return {
-          ok: true,
-          persistedToIdb: false,
-          persistedToMemory: true,
-          writtenToIdb: false,
-          skipped: false,
-          reason: "memory-fallback",
-          record: decision.record || null
-        };
-      }
-
-      const runTx = (targetConn) => new Promise((resolve) => {
-        let settled = false;
-        let didPut = false;
-        let skipReason = null;
-        let finalRecord = null;
-        let mergeError = null;
-
-        const finish = (res) => {
-          if (settled) return;
-          settled = true;
-          resolve(res);
-        };
-
-        try {
-          const tx = targetConn.transaction("books", "readwrite");
-          const store = tx.objectStore("books");
-          const getReq = store.get(bookId);
-
-          getReq.onsuccess = () => {
-            if (isStaleGeneration()) {
-              didPut = false;
-              skipReason = "stale-instance-generation";
-              finalRecord = null;
-              return;
-            }
-            if (deletedBookIdsInSession.has(bookId) && !options.allowCreate) {
-              didPut = false;
-              skipReason = "deleted-in-session";
-              finalRecord = null;
-              return;
-            }
-
-            const diskRecord = getReq.result || null;
-            let decision;
-            try {
-              // ESTRICTAMENTE SÍNCRONO dentro del callback onsuccess de store.get()
-              decision = mergeFn(diskRecord);
-            } catch (err) {
-              mergeError = err;
-              try { tx.abort(); } catch (abortErr) {}
-              return;
-            }
-
-            if (!decision || decision.skip || !decision.record) {
-              didPut = false;
-              skipReason = (decision && decision.reason) || "skipped";
-              finalRecord = (decision && decision.record) || diskRecord;
-              return;
-            }
-
-            didPut = true;
-            finalRecord = decision.record;
-            const putReq = store.put(finalRecord);
-            putReq.onerror = () => {
-              // Manejado por tx.onerror / tx.onabort
+        if (!conn) {
+          if (isStaleGeneration()) {
+            return {
+              ok: true,
+              persistedToIdb: false,
+              persistedToMemory: false,
+              writtenToIdb: false,
+              skipped: true,
+              reason: "stale-instance-generation",
+              record: null
             };
+          }
+          // Fallback temporal en RAM (nunca confirma persistedToIdb)
+          const list = inMemoryDb.books || [];
+          const existingMem = list.find(x => x && x.id === bookId) || null;
+          let decision;
+          try {
+            decision = mergeFn(existingMem ? { ...existingMem } : null);
+          } catch (err) {
+            return {
+              ok: false,
+              persistedToIdb: false,
+              persistedToMemory: false,
+              writtenToIdb: false,
+              skipped: false,
+              reason: "merge-error",
+              error: err,
+              record: null
+            };
+          }
+          if (!decision || decision.skip) {
+            return {
+              ok: true,
+              persistedToIdb: false,
+              persistedToMemory: false,
+              writtenToIdb: false,
+              skipped: true,
+              reason: (decision && decision.reason) || "skipped",
+              record: (decision && decision.record) || existingMem
+            };
+          }
+          if (decision.record) {
+            putInMemoryStore("books", decision.record);
+            syncBookCachesAfterCommit(decision.record, options);
+          }
+          return {
+            ok: true,
+            persistedToIdb: false,
+            persistedToMemory: true,
+            writtenToIdb: false,
+            skipped: false,
+            reason: "memory-fallback",
+            record: decision.record || null
+          };
+        }
+
+        const runTx = (targetConn) => new Promise((resolve) => {
+          let settled = false;
+          let didPut = false;
+          let skipReason = null;
+          let finalRecord = null;
+          let mergeError = null;
+          let untrackTx = () => {};
+
+          const finish = (res) => {
+            if (settled) return;
+            settled = true;
+            untrackTx();
+            resolve(res);
           };
 
-          getReq.onerror = () => {
-            const err = getReq.error;
-            if (!settled) {
-              try { tx.abort(); } catch (abortErr) {}
+          if (isCommitHoldActive()) {
+            finish(buildCommitBlockedResult({ retryableInvalidState: false, record: null }));
+            return;
+          }
+
+          try {
+            const tx = targetConn.transaction("books", "readwrite");
+            untrackTx = trackReadwriteTx(tx);
+            const store = tx.objectStore("books");
+            const getReq = store.get(bookId);
+
+            getReq.onsuccess = () => {
+              if (isStaleGeneration()) {
+                didPut = false;
+                skipReason = "stale-instance-generation";
+                finalRecord = null;
+                return;
+              }
+              if (deletedBookIdsInSession.has(bookId) && !options.allowCreate) {
+                didPut = false;
+                skipReason = "deleted-in-session";
+                finalRecord = null;
+                return;
+              }
+
+              const diskRecord = getReq.result || null;
+              let decision;
+              try {
+                // ESTRICTAMENTE SÍNCRONO dentro del callback onsuccess de store.get()
+                decision = mergeFn(diskRecord);
+              } catch (err) {
+                mergeError = err;
+                try { tx.abort(); } catch (abortErr) {}
+                return;
+              }
+
+              if (!decision || decision.skip || !decision.record) {
+                didPut = false;
+                skipReason = (decision && decision.reason) || "skipped";
+                finalRecord = (decision && decision.record) || diskRecord;
+                return;
+              }
+
+              didPut = true;
+              finalRecord = decision.record;
+              const putReq = store.put(finalRecord);
+              putReq.onerror = () => {
+                // Manejado por tx.onerror / tx.onabort
+              };
+            };
+
+            getReq.onerror = () => {
+              const err = getReq.error;
+              if (!settled) {
+                try { tx.abort(); } catch (abortErr) {}
+                finish({
+                  ok: false,
+                  persistedToIdb: false,
+                  persistedToMemory: false,
+                  writtenToIdb: false,
+                  skipped: false,
+                  aborted: true,
+                  retryableInvalidState: handleTransactionFailureAndMaybeReset(targetConn, err),
+                  error: err,
+                  record: null
+                });
+              }
+            };
+
+            tx.oncomplete = () => {
+              if (!didPut) {
+                finish({
+                  ok: true,
+                  persistedToIdb: false,
+                  persistedToMemory: false,
+                  writtenToIdb: false,
+                  skipped: true,
+                  reason: skipReason || "skipped",
+                  record: finalRecord
+                });
+                return;
+              }
+              if (finalRecord && !isStaleGeneration() && !(deletedBookIdsInSession.has(bookId) && !options.allowCreate)) {
+                putInMemoryStore("books", finalRecord);
+                syncBookCachesAfterCommit(finalRecord, options);
+              }
+              finish({
+                ok: true,
+                persistedToIdb: true,
+                persistedToMemory: false,
+                writtenToIdb: true,
+                skipped: false,
+                reason: null,
+                record: finalRecord
+              });
+            };
+
+            tx.onerror = (ev) => {
+              const err = mergeError || tx.error || ev?.target?.error;
+              if (isQuotaError(err)) notifyQuotaExceeded();
+              const retryable = handleTransactionFailureAndMaybeReset(targetConn, err);
               finish({
                 ok: false,
                 persistedToIdb: false,
@@ -1737,44 +2150,31 @@
                 writtenToIdb: false,
                 skipped: false,
                 aborted: true,
-                retryableInvalidState: handleTransactionFailureAndMaybeReset(targetConn, err),
+                quotaExceeded: isQuotaError(err),
+                retryableInvalidState: retryable,
                 error: err,
                 record: null
               });
-            }
-          };
+            };
 
-          tx.oncomplete = () => {
-            if (!didPut) {
+            tx.onabort = () => {
+              const err = mergeError || tx.error;
+              if (isQuotaError(err)) notifyQuotaExceeded();
+              const retryable = handleTransactionFailureAndMaybeReset(targetConn, err);
               finish({
-                ok: true,
+                ok: false,
                 persistedToIdb: false,
                 persistedToMemory: false,
                 writtenToIdb: false,
-                skipped: true,
-                reason: skipReason || "skipped",
-                record: finalRecord
+                skipped: false,
+                aborted: true,
+                quotaExceeded: isQuotaError(err),
+                retryableInvalidState: retryable,
+                error: err,
+                record: null
               });
-              return;
-            }
-            if (finalRecord && !isStaleGeneration() && !(deletedBookIdsInSession.has(bookId) && !options.allowCreate)) {
-              putInMemoryStore("books", finalRecord);
-              syncBookCachesAfterCommit(finalRecord, options);
-            }
-            finish({
-              ok: true,
-              persistedToIdb: true,
-              persistedToMemory: false,
-              writtenToIdb: true,
-              skipped: false,
-              reason: null,
-              record: finalRecord
-            });
-          };
-
-          tx.onerror = (ev) => {
-            const err = mergeError || tx.error || ev?.target?.error;
-            if (isQuotaError(err)) notifyQuotaExceeded();
+            };
+          } catch (err) {
             const retryable = handleTransactionFailureAndMaybeReset(targetConn, err);
             finish({
               ok: false,
@@ -1782,57 +2182,25 @@
               persistedToMemory: false,
               writtenToIdb: false,
               skipped: false,
-              aborted: true,
+              aborted: false,
               quotaExceeded: isQuotaError(err),
               retryableInvalidState: retryable,
               error: err,
               record: null
             });
-          };
+          }
+        });
 
-          tx.onabort = () => {
-            const err = mergeError || tx.error;
-            if (isQuotaError(err)) notifyQuotaExceeded();
-            const retryable = handleTransactionFailureAndMaybeReset(targetConn, err);
-            finish({
-              ok: false,
-              persistedToIdb: false,
-              persistedToMemory: false,
-              writtenToIdb: false,
-              skipped: false,
-              aborted: true,
-              quotaExceeded: isQuotaError(err),
-              retryableInvalidState: retryable,
-              error: err,
-              record: null
-            });
-          };
-        } catch (err) {
-          const retryable = handleTransactionFailureAndMaybeReset(targetConn, err);
-          finish({
-            ok: false,
-            persistedToIdb: false,
-            persistedToMemory: false,
-            writtenToIdb: false,
-            skipped: false,
-            aborted: false,
-            quotaExceeded: isQuotaError(err),
-            retryableInvalidState: retryable,
-            error: err,
-            record: null
-          });
+        let res = await runTx(conn);
+        if (!res.ok && !res.blockedByCommitHold && res.retryableInvalidState && !isStaleGeneration() && !isCommitHoldActive()) {
+          resetRetryCooldown();
+          conn = await ensureDb();
+          if (conn && !isCommitHoldActive()) {
+            res = await runTx(conn);
+          }
         }
+        return res;
       });
-
-      let res = await runTx(conn);
-      if (!res.ok && res.retryableInvalidState && !isStaleGeneration()) {
-        resetRetryCooldown();
-        conn = await ensureDb();
-        if (conn) {
-          res = await runTx(conn);
-        }
-      }
-      return res;
     });
   }
 
@@ -1848,49 +2216,57 @@
    * sobre el registro real leído dentro de la transacción, sin tocar progreso de lectura.
    */
   async function saveBookPatch(bookId, patch, options = {}) {
+    if (isCommitHoldActive()) {
+      return buildCommitBlockedResult({ record: null });
+    }
     if (!bookId || !patch || typeof patch !== "object") {
       return { ok: false, persistedToIdb: false, persistedToMemory: false, writtenToIdb: false, skipped: false };
     }
-    const cleanPatch = { ...patch };
-    for (let i = 0; i < PROGRESS_FIELDS.length; i++) {
-      delete cleanPatch[PROGRESS_FIELDS[i]];
-    }
-
-    return dbUpdateBookInTransaction(
-      bookId,
-      (diskRecord) => {
-        const base = diskRecord
-          ? { ...diskRecord }
-          : (options.fallbackBook ? buildMetaRecord(options.fallbackBook) : null);
-        if (!base) {
-          return { skip: true, reason: "missing-book" };
-        }
-        const entries = Object.entries(cleanPatch);
-        for (let i = 0; i < entries.length; i++) {
-          const k = entries[i][0];
-          const v = entries[i][1];
-          if (k === "rating") {
-            base.rating = sanitizeRatingValue(v);
-          } else if (v === undefined) {
-            delete base[k];
-          } else {
-            base[k] = v;
-          }
-        }
-        if (Array.isArray(base.groups) && base.groups.length > 0) {
-          base.group = base.groups[0];
-        } else if (Object.prototype.hasOwnProperty.call(cleanPatch, "groups") && !(Array.isArray(cleanPatch.groups) && cleanPatch.groups.length > 0)) {
-          delete base.groups;
-          delete base.group;
-        }
-        return { skip: false, record: base };
-      },
-      {
-        allowCreate: Boolean(options.fallbackBook),
-        preserveNewerInMemoryProgress: true,
-        forceSyncProgress: false
+    return runTrackedWrite(async () => {
+      if (isCommitHoldActive()) {
+        return buildCommitBlockedResult({ record: null });
       }
-    );
+      const cleanPatch = { ...patch };
+      for (let i = 0; i < PROGRESS_FIELDS.length; i++) {
+        delete cleanPatch[PROGRESS_FIELDS[i]];
+      }
+
+      return dbUpdateBookInTransaction(
+        bookId,
+        (diskRecord) => {
+          const base = diskRecord
+            ? { ...diskRecord }
+            : (options.fallbackBook ? buildMetaRecord(options.fallbackBook) : null);
+          if (!base) {
+            return { skip: true, reason: "missing-book" };
+          }
+          const entries = Object.entries(cleanPatch);
+          for (let i = 0; i < entries.length; i++) {
+            const k = entries[i][0];
+            const v = entries[i][1];
+            if (k === "rating") {
+              base.rating = sanitizeRatingValue(v);
+            } else if (v === undefined) {
+              delete base[k];
+            } else {
+              base[k] = v;
+            }
+          }
+          if (Array.isArray(base.groups) && base.groups.length > 0) {
+            base.group = base.groups[0];
+          } else if (Object.prototype.hasOwnProperty.call(cleanPatch, "groups") && !(Array.isArray(cleanPatch.groups) && cleanPatch.groups.length > 0)) {
+            delete base.groups;
+            delete base.group;
+          }
+          return { skip: false, record: base };
+        },
+        {
+          allowCreate: Boolean(options.fallbackBook),
+          preserveNewerInMemoryProgress: true,
+          forceSyncProgress: false
+        }
+      );
+    });
   }
 
   /**
@@ -1954,6 +2330,9 @@
    * y escritura síncrona previa del espejo en localStorage desde este único propietario.
    */
   async function saveBookProgressPatch(bookId, progressPatch, options = {}) {
+    if (isCommitHoldActive()) {
+      return buildCommitBlockedResult({ record: null });
+    }
     if (!bookId || !progressPatch || typeof progressPatch !== "object") {
       return { ok: false, persistedToIdb: false, persistedToMemory: false, writtenToIdb: false, skipped: false };
     }
@@ -1970,107 +2349,112 @@
       };
     }
 
-    const capturedGen = getBookGeneration(bookId);
-    const capturedClearEpoch = libraryClearEpoch;
-    const isRecoveryDrain = Boolean(options.isRecoveryDrain);
-    const fromMirrorReconcile = Boolean(options.fromMirrorReconcile);
-
-    const knownState = knownDiskStateByBook.get(bookId) || null;
-    const baseRevisionKnown = options.baseRevisionKnown !== undefined
-      ? Boolean(options.baseRevisionKnown)
-      : Boolean(knownState && knownDiskRevisionByBook.has(bookId));
-    const expectedBaseRevision = baseRevisionKnown
-      ? (options.expectedBaseRevision !== undefined ? options.expectedBaseRevision : (knownState ? knownState.rev : knownDiskRevisionByBook.get(bookId)))
-      : null;
-    const expectedBaseSessionId = baseRevisionKnown
-      ? (options.expectedBaseSessionId !== undefined ? options.expectedBaseSessionId : (knownState ? knownState.sess : null))
-      : undefined;
-    const expectedBaseSeq = baseRevisionKnown
-      ? (options.expectedBaseSeq !== undefined ? options.expectedBaseSeq : (knownState ? knownState.seq : 0))
-      : undefined;
-
-    const incomingSeq = typeof progressPatch.progressSeq === "number" && Number.isFinite(progressPatch.progressSeq)
-      ? progressPatch.progressSeq
-      : nextBookProgressSeq(bookId);
-    const incomingTs = typeof progressPatch.progressUpdatedAt === "number" && Number.isFinite(progressPatch.progressUpdatedAt)
-      ? progressPatch.progressUpdatedAt
-      : nextMonotonicProgressTimestamp();
-    const incomingSessionId = (typeof progressPatch.progressSessionId === "string" && progressPatch.progressSessionId)
-      ? progressPatch.progressSessionId
-      : STORAGE_SESSION_ID;
-
-    const resolvedInstanceId = (
-      (typeof options.expectedBookInstanceId === "string" && options.expectedBookInstanceId) ||
-      bookInstanceIdByBook.get(bookId) ||
-      (options.fallbackBook && typeof options.fallbackBook.bookInstanceId === "string" && options.fallbackBook.bookInstanceId) ||
-      null
-    );
-
-    const preparedPatch = {
-      currentChapter: typeof progressPatch.currentChapter === "number" && Number.isFinite(progressPatch.currentChapter)
-        ? Math.max(0, progressPatch.currentChapter)
-        : undefined,
-      chapterScrollRatio: typeof progressPatch.chapterScrollRatio === "number" && Number.isFinite(progressPatch.chapterScrollRatio)
-        ? Math.max(0, Math.min(1, progressPatch.chapterScrollRatio))
-        : undefined,
-      chapterAnchor: progressPatch.chapterAnchor !== undefined ? progressPatch.chapterAnchor : undefined,
-      hasStartedReading: progressPatch.hasStartedReading !== undefined ? Boolean(progressPatch.hasStartedReading) : undefined,
-      lastOpenedAt: typeof progressPatch.lastOpenedAt === "number" ? progressPatch.lastOpenedAt : undefined,
-      progressSeq: incomingSeq,
-      progressSessionId: incomingSessionId,
-      progressUpdatedAt: incomingTs,
-      expectedBaseRevision,
-      expectedBaseSessionId,
-      expectedBaseSeq,
-      expectedBookInstanceId: resolvedInstanceId,
-      baseRevisionKnown,
-      explicitUserChapterSwitch: Boolean(options.explicitUserChapterSwitch)
-    };
-
-    // Escritura síncrona previa del espejo pendiente antes de cualquier await (para pagehide / freeze / beforeunload)
-    if (!options.skipPreMirrorWrite && !isRecoveryDrain && !fromMirrorReconcile) {
-      const refBook = options.fallbackBook || hooks.getCurrentBook() || null;
-      const existingMirror = readProgressMirror(bookId);
-      const mirrorChapter = preparedPatch.currentChapter !== undefined
-        ? preparedPatch.currentChapter
-        : (refBook && refBook.id === bookId && typeof refBook.currentChapter === "number" && Number.isFinite(refBook.currentChapter)
-          ? Math.max(0, refBook.currentChapter)
-          : (existingMirror && typeof existingMirror.currentChapter === "number" && Number.isFinite(existingMirror.currentChapter) ? existingMirror.currentChapter : 0));
-      const mirrorRatio = preparedPatch.chapterScrollRatio !== undefined
-        ? preparedPatch.chapterScrollRatio
-        : (refBook && refBook.id === bookId && typeof refBook.chapterScrollRatio === "number" && Number.isFinite(refBook.chapterScrollRatio)
-          ? Math.max(0, Math.min(1, refBook.chapterScrollRatio))
-          : (existingMirror && typeof existingMirror.chapterScrollRatio === "number" && Number.isFinite(existingMirror.chapterScrollRatio) ? existingMirror.chapterScrollRatio : 0));
-      const mirrorAnchor = preparedPatch.chapterAnchor !== undefined
-        ? preparedPatch.chapterAnchor
-        : (refBook && refBook.id === bookId ? (refBook.chapterAnchor || null) : (existingMirror ? existingMirror.chapterAnchor || null : null));
-      const mirrorStarted = preparedPatch.hasStartedReading !== undefined
-        ? preparedPatch.hasStartedReading
-        : Boolean((refBook && refBook.id === bookId && refBook.hasStartedReading) || mirrorChapter > 0 || mirrorRatio > 0);
-
-      if (mirrorStarted || mirrorChapter > 0 || mirrorRatio > 0) {
-        const preMirrorPayload = {
-          version: 1,
-          bookId,
-          bookInstanceId: resolvedInstanceId,
-          confirmedInIdb: false,
-          progressRevision: null,
-          progressSessionId: preparedPatch.progressSessionId,
-          progressSeq: preparedPatch.progressSeq,
-          baseRevisionKnown: preparedPatch.baseRevisionKnown,
-          baseDiskRevision: preparedPatch.baseRevisionKnown ? preparedPatch.expectedBaseRevision : null,
-          baseDiskSessionId: preparedPatch.baseRevisionKnown ? preparedPatch.expectedBaseSessionId : undefined,
-          baseDiskSeq: preparedPatch.baseRevisionKnown ? preparedPatch.expectedBaseSeq : null,
-          currentChapter: mirrorChapter,
-          chapterScrollRatio: mirrorRatio,
-          chapterAnchor: mirrorAnchor && typeof mirrorAnchor === "object" ? mirrorAnchor : null,
-          hasStartedReading: mirrorStarted
-        };
-        writeProgressMirror(bookId, preMirrorPayload);
+    return runTrackedWrite(async () => {
+      if (isCommitHoldActive()) {
+        return buildCommitBlockedResult({ record: null });
       }
-    }
+      const capturedGen = getBookGeneration(bookId);
+      const capturedClearEpoch = libraryClearEpoch;
+      const isRecoveryDrain = Boolean(options.isRecoveryDrain);
+      const fromMirrorReconcile = Boolean(options.fromMirrorReconcile);
 
-    const res = await dbUpdateBookInTransaction(
+      const knownState = knownDiskStateByBook.get(bookId) || null;
+      const baseRevisionKnown = options.baseRevisionKnown !== undefined
+        ? Boolean(options.baseRevisionKnown)
+        : Boolean(knownState && knownDiskRevisionByBook.has(bookId));
+      const expectedBaseRevision = baseRevisionKnown
+        ? (options.expectedBaseRevision !== undefined ? options.expectedBaseRevision : (knownState ? knownState.rev : knownDiskRevisionByBook.get(bookId)))
+        : null;
+      const expectedBaseSessionId = baseRevisionKnown
+        ? (options.expectedBaseSessionId !== undefined ? options.expectedBaseSessionId : (knownState ? knownState.sess : null))
+        : undefined;
+      const expectedBaseSeq = baseRevisionKnown
+        ? (options.expectedBaseSeq !== undefined ? options.expectedBaseSeq : (knownState ? knownState.seq : 0))
+        : undefined;
+
+      const incomingSeq = typeof progressPatch.progressSeq === "number" && Number.isFinite(progressPatch.progressSeq)
+        ? progressPatch.progressSeq
+        : nextBookProgressSeq(bookId);
+      const incomingTs = typeof progressPatch.progressUpdatedAt === "number" && Number.isFinite(progressPatch.progressUpdatedAt)
+        ? progressPatch.progressUpdatedAt
+        : nextMonotonicProgressTimestamp();
+      const incomingSessionId = (typeof progressPatch.progressSessionId === "string" && progressPatch.progressSessionId)
+        ? progressPatch.progressSessionId
+        : STORAGE_SESSION_ID;
+
+      const resolvedInstanceId = (
+        (typeof options.expectedBookInstanceId === "string" && options.expectedBookInstanceId) ||
+        bookInstanceIdByBook.get(bookId) ||
+        (options.fallbackBook && typeof options.fallbackBook.bookInstanceId === "string" && options.fallbackBook.bookInstanceId) ||
+        null
+      );
+
+      const preparedPatch = {
+        currentChapter: typeof progressPatch.currentChapter === "number" && Number.isFinite(progressPatch.currentChapter)
+          ? Math.max(0, progressPatch.currentChapter)
+          : undefined,
+        chapterScrollRatio: typeof progressPatch.chapterScrollRatio === "number" && Number.isFinite(progressPatch.chapterScrollRatio)
+          ? Math.max(0, Math.min(1, progressPatch.chapterScrollRatio))
+          : undefined,
+        chapterAnchor: progressPatch.chapterAnchor !== undefined ? progressPatch.chapterAnchor : undefined,
+        hasStartedReading: progressPatch.hasStartedReading !== undefined ? Boolean(progressPatch.hasStartedReading) : undefined,
+        lastOpenedAt: typeof progressPatch.lastOpenedAt === "number" ? progressPatch.lastOpenedAt : undefined,
+        progressSeq: incomingSeq,
+        progressSessionId: incomingSessionId,
+        progressUpdatedAt: incomingTs,
+        expectedBaseRevision,
+        expectedBaseSessionId,
+        expectedBaseSeq,
+        expectedBookInstanceId: resolvedInstanceId,
+        baseRevisionKnown,
+        explicitUserChapterSwitch: Boolean(options.explicitUserChapterSwitch)
+      };
+
+      // Escritura síncrona previa del espejo pendiente antes de cualquier await (para pagehide / freeze / beforeunload)
+      // Bloqueada estrictamente si commitHold está activo.
+      if (!isCommitHoldActive() && !options.skipPreMirrorWrite && !isRecoveryDrain && !fromMirrorReconcile) {
+        const refBook = options.fallbackBook || hooks.getCurrentBook() || null;
+        const existingMirror = readProgressMirror(bookId);
+        const mirrorChapter = preparedPatch.currentChapter !== undefined
+          ? preparedPatch.currentChapter
+          : (refBook && refBook.id === bookId && typeof refBook.currentChapter === "number" && Number.isFinite(refBook.currentChapter)
+            ? Math.max(0, refBook.currentChapter)
+            : (existingMirror && typeof existingMirror.currentChapter === "number" && Number.isFinite(existingMirror.currentChapter) ? existingMirror.currentChapter : 0));
+        const mirrorRatio = preparedPatch.chapterScrollRatio !== undefined
+          ? preparedPatch.chapterScrollRatio
+          : (refBook && refBook.id === bookId && typeof refBook.chapterScrollRatio === "number" && Number.isFinite(refBook.chapterScrollRatio)
+            ? Math.max(0, Math.min(1, refBook.chapterScrollRatio))
+            : (existingMirror && typeof existingMirror.chapterScrollRatio === "number" && Number.isFinite(existingMirror.chapterScrollRatio) ? existingMirror.chapterScrollRatio : 0));
+        const mirrorAnchor = preparedPatch.chapterAnchor !== undefined
+          ? preparedPatch.chapterAnchor
+          : (refBook && refBook.id === bookId ? (refBook.chapterAnchor || null) : (existingMirror ? existingMirror.chapterAnchor || null : null));
+        const mirrorStarted = preparedPatch.hasStartedReading !== undefined
+          ? preparedPatch.hasStartedReading
+          : Boolean((refBook && refBook.id === bookId && refBook.hasStartedReading) || mirrorChapter > 0 || mirrorRatio > 0);
+
+        if (mirrorStarted || mirrorChapter > 0 || mirrorRatio > 0) {
+          const preMirrorPayload = {
+            version: 1,
+            bookId,
+            bookInstanceId: resolvedInstanceId,
+            confirmedInIdb: false,
+            progressRevision: null,
+            progressSessionId: preparedPatch.progressSessionId,
+            progressSeq: preparedPatch.progressSeq,
+            baseRevisionKnown: preparedPatch.baseRevisionKnown,
+            baseDiskRevision: preparedPatch.baseRevisionKnown ? preparedPatch.expectedBaseRevision : null,
+            baseDiskSessionId: preparedPatch.baseRevisionKnown ? preparedPatch.expectedBaseSessionId : undefined,
+            baseDiskSeq: preparedPatch.baseRevisionKnown ? preparedPatch.expectedBaseSeq : null,
+            currentChapter: mirrorChapter,
+            chapterScrollRatio: mirrorRatio,
+            chapterAnchor: mirrorAnchor && typeof mirrorAnchor === "object" ? mirrorAnchor : null,
+            hasStartedReading: mirrorStarted
+          };
+          writeProgressMirror(bookId, preMirrorPayload);
+        }
+      }
+
+      const res = await dbUpdateBookInTransaction(
       bookId,
       (diskRecord) => {
         if (!diskRecord) {
@@ -2212,31 +2596,34 @@
       }
     }
 
-    // Si falló IDB o cayó a RAM temporal (y no es ya un drenado conflictivo/descartado), conservar en pendingRecoveryProgressPatches
-    if (!res.persistedToIdb && !res.skipped && !isRecoveryDrain && !fromMirrorReconcile && stillSameInstance) {
-      const existingPending = pendingRecoveryProgressPatches.get(bookId);
-      if (!existingPending || preparedPatch.progressSeq >= existingPending.progressSeq) {
-        pendingRecoveryProgressPatches.set(bookId, preparedPatch);
-      }
-    } else if (res.persistedToIdb && isRecoveryDrain) {
-      pendingRecoveryProgressPatches.delete(bookId);
-    } else if (res.skipped && isRecoveryDrain) {
-      pendingRecoveryProgressPatches.delete(bookId);
-    } else if (res.persistedToIdb && !isRecoveryDrain && !fromMirrorReconcile) {
-      const curPending = pendingRecoveryProgressPatches.get(bookId);
-      if (curPending && curPending.progressSeq <= preparedPatch.progressSeq) {
+      // Si falló IDB o cayó a RAM temporal (y no es ya un drenado conflictivo/descartado), conservar en pendingRecoveryProgressPatches
+      if (!res.blockedByCommitHold && !res.persistedToIdb && !res.skipped && !isRecoveryDrain && !fromMirrorReconcile && stillSameInstance) {
+        const existingPending = pendingRecoveryProgressPatches.get(bookId);
+        if (!existingPending || preparedPatch.progressSeq >= existingPending.progressSeq) {
+          pendingRecoveryProgressPatches.set(bookId, preparedPatch);
+        }
+      } else if (res.persistedToIdb && isRecoveryDrain) {
         pendingRecoveryProgressPatches.delete(bookId);
+      } else if (res.skipped && isRecoveryDrain) {
+        pendingRecoveryProgressPatches.delete(bookId);
+      } else if (res.persistedToIdb && !isRecoveryDrain && !fromMirrorReconcile) {
+        const curPending = pendingRecoveryProgressPatches.get(bookId);
+        if (curPending && curPending.progressSeq <= preparedPatch.progressSeq) {
+          pendingRecoveryProgressPatches.delete(bookId);
+        }
       }
-    }
 
-    return res;
+      return res;
+    });
   }
 
   async function drainPendingRecoveryProgressPatches() {
+    if (isCommitHoldActive()) return [];
     if (!db || pendingRecoveryProgressPatches.size === 0) return [];
     const entries = Array.from(pendingRecoveryProgressPatches.entries());
     const results = [];
     for (let i = 0; i < entries.length; i++) {
+      if (isCommitHoldActive()) break;
       const bookId = entries[i][0];
       const patch = entries[i][1];
       if (!patch || deletedBookIdsInSession.has(bookId)) {
@@ -2251,6 +2638,7 @@
         expectedBaseSeq: patch.expectedBaseSeq,
         expectedBookInstanceId: patch.expectedBookInstanceId
       });
+      if (res && res.blockedByCommitHold) break;
       results.push({ bookId, res });
       if (typeof hooks.onRecoverySync === "function") {
         try {
@@ -2262,199 +2650,217 @@
   }
 
   async function saveBookMeta(book, options = {}) {
+    if (isCommitHoldActive()) return false;
     if (!book || !book.id) return false;
+    return runTrackedWrite(async () => {
+      if (isCommitHoldActive()) return false;
+      if (Array.isArray(options.fields) && options.fields.length > 0) {
+        const fullRec = buildMetaRecord(book);
+        const patch = {};
+        for (let i = 0; i < options.fields.length; i++) {
+          const key = options.fields[i];
+          patch[key] = fullRec[key];
+        }
+        const res = await saveBookPatch(book.id, patch, { fallbackBook: book });
+        return Boolean(res.ok);
+      }
 
-    if (Array.isArray(options.fields) && options.fields.length > 0) {
+      const allowProgressOverwrite = Boolean(options.allowProgressOverwrite || options.kind === "full" || options.kind === "backup_merge");
       const fullRec = buildMetaRecord(book);
-      const patch = {};
-      for (let i = 0; i < options.fields.length; i++) {
-        const key = options.fields[i];
-        patch[key] = fullRec[key];
+      if (allowProgressOverwrite) {
+        deletedBookIdsInSession.delete(book.id);
       }
-      const res = await saveBookPatch(book.id, patch, { fallbackBook: book });
-      return Boolean(res.ok);
-    }
 
-    const allowProgressOverwrite = Boolean(options.allowProgressOverwrite || options.kind === "full" || options.kind === "backup_merge");
-    const fullRec = buildMetaRecord(book);
-    if (allowProgressOverwrite) {
-      deletedBookIdsInSession.delete(book.id);
-    }
+      const expectedBase = knownDiskRevisionByBook.has(book.id) ? knownDiskRevisionByBook.get(book.id) : null;
+      const seq = nextBookProgressSeq(book.id);
+      const ts = nextMonotonicProgressTimestamp();
+      const capturedGen = getBookGeneration(book.id);
+      const capturedClearEpoch = libraryClearEpoch;
 
-    const expectedBase = knownDiskRevisionByBook.has(book.id) ? knownDiskRevisionByBook.get(book.id) : null;
-    const seq = nextBookProgressSeq(book.id);
-    const ts = nextMonotonicProgressTimestamp();
-    const capturedGen = getBookGeneration(book.id);
-    const capturedClearEpoch = libraryClearEpoch;
-
-    const res = await dbUpdateBookInTransaction(
-      book.id,
-      (diskRecord) => {
-        if (!diskRecord) {
-          fullRec.bookInstanceId = fullRec.bookInstanceId || generateBookInstanceId();
-          fullRec.progressRevision = 1;
-          fullRec.progressSeq = seq;
-          fullRec.progressSessionId = STORAGE_SESSION_ID;
-          fullRec.progressUpdatedAt = ts;
-          return { skip: false, record: fullRec };
-        }
-
-        const diskRev = typeof diskRecord.progressRevision === "number" && Number.isFinite(diskRecord.progressRevision)
-          ? diskRecord.progressRevision
-          : 0;
-        const merged = { ...diskRecord, ...fullRec };
-        if (options.kind === "full") {
-          merged.bookInstanceId = fullRec.bookInstanceId || generateBookInstanceId();
-        } else {
-          merged.bookInstanceId = diskRecord.bookInstanceId || fullRec.bookInstanceId || generateBookInstanceId();
-        }
-        if (fullRec.group === undefined) delete merged.group;
-        if (fullRec.groups === undefined) delete merged.groups;
-        if (fullRec.chapterWordCounts === undefined) {
-          if (diskRecord.chapterWordCounts !== undefined) merged.chapterWordCounts = diskRecord.chapterWordCounts;
-          else delete merged.chapterWordCounts;
-        }
-
-        if (!allowProgressOverwrite) {
-          const isDiskNewerOrEqual = (
-            diskRecord.progressSessionId &&
-            diskRecord.progressSessionId !== STORAGE_SESSION_ID &&
-            (expectedBase === null || diskRev > expectedBase)
-          ) || (
-            diskRecord.progressSessionId === STORAGE_SESSION_ID &&
-            (diskRecord.progressSeq || 0) >= (book.progressSeq || 0)
-          );
-          if (isDiskNewerOrEqual) {
-            merged.currentChapter = diskRecord.currentChapter;
-            merged.chapterScrollRatio = diskRecord.chapterScrollRatio;
-            merged.chapterAnchor = diskRecord.chapterAnchor;
-            merged.hasStartedReading = diskRecord.hasStartedReading;
-            merged.progressRevision = diskRecord.progressRevision;
-            merged.progressSeq = diskRecord.progressSeq;
-            merged.progressSessionId = diskRecord.progressSessionId;
-            merged.progressUpdatedAt = diskRecord.progressUpdatedAt;
-            return { skip: false, record: merged };
+      const res = await dbUpdateBookInTransaction(
+        book.id,
+        (diskRecord) => {
+          if (!diskRecord) {
+            fullRec.bookInstanceId = fullRec.bookInstanceId || generateBookInstanceId();
+            fullRec.progressRevision = 1;
+            fullRec.progressSeq = seq;
+            fullRec.progressSessionId = STORAGE_SESSION_ID;
+            fullRec.progressUpdatedAt = ts;
+            return { skip: false, record: fullRec };
           }
+
+          const diskRev = typeof diskRecord.progressRevision === "number" && Number.isFinite(diskRecord.progressRevision)
+            ? diskRecord.progressRevision
+            : 0;
+          const merged = { ...diskRecord, ...fullRec };
+          if (options.kind === "full") {
+            merged.bookInstanceId = fullRec.bookInstanceId || generateBookInstanceId();
+          } else {
+            merged.bookInstanceId = diskRecord.bookInstanceId || fullRec.bookInstanceId || generateBookInstanceId();
+          }
+          if (fullRec.group === undefined) delete merged.group;
+          if (fullRec.groups === undefined) delete merged.groups;
+          if (fullRec.chapterWordCounts === undefined) {
+            if (diskRecord.chapterWordCounts !== undefined) merged.chapterWordCounts = diskRecord.chapterWordCounts;
+            else delete merged.chapterWordCounts;
+          }
+
+          if (!allowProgressOverwrite) {
+            const isDiskNewerOrEqual = (
+              diskRecord.progressSessionId &&
+              diskRecord.progressSessionId !== STORAGE_SESSION_ID &&
+              (expectedBase === null || diskRev > expectedBase)
+            ) || (
+              diskRecord.progressSessionId === STORAGE_SESSION_ID &&
+              (diskRecord.progressSeq || 0) >= (book.progressSeq || 0)
+            );
+            if (isDiskNewerOrEqual) {
+              merged.currentChapter = diskRecord.currentChapter;
+              merged.chapterScrollRatio = diskRecord.chapterScrollRatio;
+              merged.chapterAnchor = diskRecord.chapterAnchor;
+              merged.hasStartedReading = diskRecord.hasStartedReading;
+              merged.progressRevision = diskRecord.progressRevision;
+              merged.progressSeq = diskRecord.progressSeq;
+              merged.progressSessionId = diskRecord.progressSessionId;
+              merged.progressUpdatedAt = diskRecord.progressUpdatedAt;
+              return { skip: false, record: merged };
+            }
+          }
+
+          merged.progressRevision = Math.max(diskRev, expectedBase || 0) + 1;
+          merged.progressSeq = seq;
+          merged.progressSessionId = STORAGE_SESSION_ID;
+          merged.progressUpdatedAt = ts;
+          return { skip: false, record: merged };
+        },
+        {
+          allowCreate: true,
+          forceSyncProgress: allowProgressOverwrite,
+          preserveNewerInMemoryProgress: !allowProgressOverwrite,
+          capturedGen,
+          capturedClearEpoch
         }
+      );
 
-        merged.progressRevision = Math.max(diskRev, expectedBase || 0) + 1;
-        merged.progressSeq = seq;
-        merged.progressSessionId = STORAGE_SESSION_ID;
-        merged.progressUpdatedAt = ts;
-        return { skip: false, record: merged };
-      },
-      {
-        allowCreate: true,
-        forceSyncProgress: allowProgressOverwrite,
-        preserveNewerInMemoryProgress: !allowProgressOverwrite,
-        capturedGen,
-        capturedClearEpoch
+      if (res.persistedToIdb && res.record) {
+        syncMirrorFromDiskRecord(res.record);
       }
-    );
-
-    if (res.persistedToIdb && res.record) {
-      syncMirrorFromDiskRecord(res.record);
-    }
-    return Boolean(res.ok);
+      return Boolean(res.ok);
+    });
   }
 
   async function saveFullBookToDb(bookData, assetBlobs = []) {
+    if (isCommitHoldActive()) return false;
     if (!bookData || !bookData.id) return false;
-    const bookId = bookData.id;
+    return runTrackedWrite(async () => {
+      if (isCommitHoldActive()) return false;
+      const bookId = bookData.id;
 
-    // Barrera determinista para reimportaciones sobre el mismo bookId
-    const priorQueue = bookWriteQueues.get(bookId);
-    deletedBookIdsInSession.add(bookId);
-    bumpBookGeneration(bookId);
-    if (priorQueue) {
-      await priorQueue.catch(() => {});
-    }
-
-    // Si había una limpieza pendiente para este mismo bookId, ejecutarla/purgarla antes de escribir los nuevos recursos
-    await flushPendingAssetCleanupsForBookId(bookId);
-
-    pendingRecoveryProgressPatches.delete(bookId);
-    knownDiskRevisionByBook.delete(bookId);
-    knownDiskStateByBook.delete(bookId);
-    bookSeqCounters.delete(bookId);
-    bookInstanceIdByBook.delete(bookId);
-    removeProgressMirror(bookId);
-
-    // Toda importación completa crea una nueva identidad de instancia aunque reutilice bookId (p. ej. backup)
-    bookData.bookInstanceId = generateBookInstanceId();
-
-    const removeFromBooksList = (targetBookId) => {
-      const list = hooks.getBooksList();
-      if (Array.isArray(list)) {
-        hooks.setBooksList(list.filter(b => b && b.id !== targetBookId));
+      // Barrera determinista para reimportaciones sobre el mismo bookId
+      const priorQueue = bookWriteQueues.get(bookId);
+      deletedBookIdsInSession.add(bookId);
+      bumpBookGeneration(bookId);
+      if (priorQueue) {
+        await priorQueue.catch(() => {});
       }
-    };
+      if (isCommitHoldActive()) return false;
 
-    if (Array.isArray(assetBlobs) && assetBlobs.length > 0) {
-      const assetBatch = [];
-      for (let i = 0; i < assetBlobs.length; i++) {
-        const asset = assetBlobs[i];
-        if (!asset || !asset.assetKey) continue;
-        assetBatch.push({
-          assetKey: asset.assetKey,
-          bookId,
-          buffer: asset.buffer || null,
-          mimeType: asset.mimeType || "image/jpeg"
-        });
-        assetBlobs[i] = null;
-      }
-      if (assetBatch.length > 0) {
-        const assetsSaved = await dbSaveBatch("bookAssets", assetBatch, 16);
-        if (!assetsSaved) {
-          await deleteBookAndAssets(bookId).catch(() => {});
-          removeFromBooksList(bookId);
-          return false;
+      // Si había una limpieza pendiente para este mismo bookId, ejecutarla/purgarla antes de escribir los nuevos recursos
+      await flushPendingAssetCleanupsForBookId(bookId);
+      if (isCommitHoldActive()) return false;
+
+      pendingRecoveryProgressPatches.delete(bookId);
+      knownDiskRevisionByBook.delete(bookId);
+      knownDiskStateByBook.delete(bookId);
+      bookSeqCounters.delete(bookId);
+      bookInstanceIdByBook.delete(bookId);
+      removeProgressMirror(bookId);
+
+      // Toda importación completa crea una nueva identidad de instancia aunque reutilice bookId (p. ej. backup)
+      bookData.bookInstanceId = generateBookInstanceId();
+
+      const removeFromBooksList = (targetBookId) => {
+        const list = hooks.getBooksList();
+        if (Array.isArray(list)) {
+          hooks.setBooksList(list.filter(b => b && b.id !== targetBookId));
+        }
+      };
+
+      if (Array.isArray(assetBlobs) && assetBlobs.length > 0) {
+        const assetBatch = [];
+        for (let i = 0; i < assetBlobs.length; i++) {
+          const asset = assetBlobs[i];
+          if (!asset || !asset.assetKey) continue;
+          assetBatch.push({
+            assetKey: asset.assetKey,
+            bookId,
+            buffer: asset.buffer || null,
+            mimeType: asset.mimeType || "image/jpeg"
+          });
+          assetBlobs[i] = null;
+        }
+        if (assetBatch.length > 0) {
+          const assetsSaved = await dbSaveBatch("bookAssets", assetBatch, 16);
+          if (!assetsSaved) {
+            if (!isCommitHoldActive()) {
+              await deleteBookAndAssets(bookId).catch(() => {});
+              removeFromBooksList(bookId);
+            }
+            return false;
+          }
         }
       }
-    }
 
-    const chapters = Array.isArray(bookData.chapters) ? bookData.chapters : [];
-    let contentSaved = false;
-    if (chapters.length > CHAPTER_CHUNK_SIZE) {
-      const chunkCount = Math.ceil(chapters.length / CHAPTER_CHUNK_SIZE);
-      const contentBatch = [];
-      for (let c = 0; c < chunkCount; c++) {
-        const slice = chapters.slice(c * CHAPTER_CHUNK_SIZE, (c + 1) * CHAPTER_CHUNK_SIZE);
+      if (isCommitHoldActive()) return false;
+
+      const chapters = Array.isArray(bookData.chapters) ? bookData.chapters : [];
+      let contentSaved = false;
+      if (chapters.length > CHAPTER_CHUNK_SIZE) {
+        const chunkCount = Math.ceil(chapters.length / CHAPTER_CHUNK_SIZE);
+        const contentBatch = [];
+        for (let c = 0; c < chunkCount; c++) {
+          const slice = chapters.slice(c * CHAPTER_CHUNK_SIZE, (c + 1) * CHAPTER_CHUNK_SIZE);
+          contentBatch.push({
+            bookId: `${bookId}__chunk_${c}`,
+            chapters: slice
+          });
+        }
         contentBatch.push({
-          bookId: `${bookId}__chunk_${c}`,
-          chapters: slice
+          bookId,
+          chunkCount,
+          chapters: [],
+          footnotes: bookData.footnotes || {}
+        });
+        contentSaved = await dbSaveBatch("bookContents", contentBatch, 10);
+      } else {
+        contentSaved = await dbSave("bookContents", {
+          bookId,
+          chunkCount: 0,
+          chapters,
+          footnotes: bookData.footnotes || {}
         });
       }
-      contentBatch.push({
-        bookId,
-        chunkCount,
-        chapters: [],
-        footnotes: bookData.footnotes || {}
-      });
-      contentSaved = await dbSaveBatch("bookContents", contentBatch, 10);
-    } else {
-      contentSaved = await dbSave("bookContents", {
-        bookId,
-        chunkCount: 0,
-        chapters,
-        footnotes: bookData.footnotes || {}
-      });
-    }
 
-    if (!contentSaved) {
-      await deleteBookAndAssets(bookId).catch(() => {});
-      removeFromBooksList(bookId);
-      return false;
-    }
+      if (!contentSaved) {
+        if (!isCommitHoldActive()) {
+          await deleteBookAndAssets(bookId).catch(() => {});
+          removeFromBooksList(bookId);
+        }
+        return false;
+      }
+      if (isCommitHoldActive()) return false;
 
-    deletedBookIdsInSession.delete(bookId);
-    const metaSaved = await saveBookMeta(bookData, { allowProgressOverwrite: true, kind: "full" });
-    if (!metaSaved) {
-      await deleteBookAndAssets(bookId).catch(() => {});
-      removeFromBooksList(bookId);
-      return false;
-    }
-    return true;
+      deletedBookIdsInSession.delete(bookId);
+      const metaSaved = await saveBookMeta(bookData, { allowProgressOverwrite: true, kind: "full" });
+      if (!metaSaved) {
+        if (!isCommitHoldActive()) {
+          await deleteBookAndAssets(bookId).catch(() => {});
+          removeFromBooksList(bookId);
+        }
+        return false;
+      }
+      return true;
+    }, { bulk: true });
   }
 
   function releaseBookHeavyMemory(bookIdToFree, keepBookObj = null) {
@@ -2582,6 +2988,9 @@
   }
 
   async function flushPendingAssetCleanups(loadedBooks = null) {
+    if (isCommitHoldActive()) {
+      return { processed: 0, remaining: Object.keys(pendingAssetCleanupsRam).length, blockedByCommitHold: true };
+    }
     if (!db) return { processed: 0, remaining: Object.keys(pendingAssetCleanupsRam).length };
     const merged = await loadMergedPendingAssetCleanups();
     const ids = Object.keys(merged);
@@ -2627,6 +3036,7 @@
     if (!Array.isArray(books) || books.length === 0) return [];
     const updated = [];
     for (let i = 0; i < books.length; i++) {
+      if (isCommitHoldActive()) break;
       const b = books[i];
       if (!b || !b.id) continue;
       if (typeof b.bookInstanceId === "string" && b.bookInstanceId.length > 0) {
@@ -2651,6 +3061,7 @@
           preserveNewerInMemoryProgress: true
         }
       );
+      if (res && res.blockedByCommitHold) break;
       if ((res.persistedToIdb || res.skipped) && res.record && res.record.bookInstanceId) {
         b.bookInstanceId = res.record.bookInstanceId;
         bookInstanceIdByBook.set(b.id, res.record.bookInstanceId);
@@ -2664,6 +3075,7 @@
   }
 
   async function reconcileProgressMirrors(booksListInput = null) {
+    if (isCommitHoldActive()) return [];
     const mirrorIds = listMirrorBookIds();
     if (mirrorIds.length === 0) return [];
     const books = Array.isArray(booksListInput) ? booksListInput : await dbGetAll("books");
@@ -2676,6 +3088,7 @@
 
     const results = [];
     for (let i = 0; i < mirrorIds.length; i++) {
+      if (isCommitHoldActive()) break;
       const bookId = mirrorIds[i];
       const diskRecord = booksMap.get(bookId) || null;
       if (!diskRecord || deletedBookIdsInSession.has(bookId)) {
@@ -2761,6 +3174,18 @@
   }
 
   async function deleteBookAndAssets(bookId) {
+    if (isCommitHoldActive()) {
+      return buildCommitBlockedResult({
+        deletedBook: false,
+        deletedFromIdb: false,
+        deletedFromMemoryOnly: false,
+        partial: false,
+        pendingCleanupPersisted: false,
+        orphanedAssetsPossible: false,
+        failedStores: [],
+        error: null
+      });
+    }
     if (!bookId) {
       return {
         ok: false,
@@ -2777,49 +3202,102 @@
       };
     }
 
-    bumpBookGeneration(bookId);
-    deletedBookIdsInSession.add(bookId);
-    const tail = bookWriteQueues.get(bookId);
-    if (tail) {
-      await tail.catch(() => {});
-    }
-
-    const existingBookRec = await dbGet("books", bookId).catch(() => null);
-    const capturedInstanceId = (
-      (existingBookRec && typeof existingBookRec.bookInstanceId === "string" && existingBookRec.bookInstanceId) ||
-      bookInstanceIdByBook.get(bookId) ||
-      null
-    );
-
-    const contentRec = await dbGet("bookContents", bookId);
-    const contentKeysToDelete = [bookId];
-    if (contentRec && contentRec.chunkCount > 0) {
-      for (let c = 0; c < contentRec.chunkCount; c++) {
-        contentKeysToDelete.push(`${bookId}__chunk_${c}`);
+    return runTrackedWrite(async () => {
+      if (isCommitHoldActive()) {
+        return buildCommitBlockedResult({
+          deletedBook: false,
+          deletedFromIdb: false,
+          deletedFromMemoryOnly: false,
+          partial: false,
+          pendingCleanupPersisted: false,
+          orphanedAssetsPossible: false,
+          failedStores: [],
+          error: null
+        });
       }
-    }
-    const settingsKeysToDelete = [`bookSearchHistory_${bookId}`];
-    const assetKeys = await dbGetAllKeys("bookAssets");
-    const matchingAssetKeys = assetKeys.filter(key => String(key).startsWith(`${bookId}::`));
 
-    // Fase 1: Borrado autoritativo del registro canónico "books"
-    const bookDel = await dbDelete("books", bookId);
-    if (!bookDel.ok) {
-      deletedBookIdsInSession.delete(bookId);
-      return {
-        ok: false,
-        persistedToIdb: false,
-        persistedToMemory: false,
-        deletedBook: false,
-        deletedFromIdb: false,
-        deletedFromMemoryOnly: false,
-        partial: false,
-        pendingCleanupPersisted: false,
-        orphanedAssetsPossible: false,
-        failedStores: ["books"],
-        error: bookDel.error || new Error("Failed deleting book record from IndexedDB")
-      };
-    }
+      const tail = bookWriteQueues.get(bookId);
+      if (tail) {
+        await tail.catch(() => {});
+      }
+      if (isCommitHoldActive()) {
+        return buildCommitBlockedResult({
+          deletedBook: false,
+          deletedFromIdb: false,
+          deletedFromMemoryOnly: false,
+          partial: false,
+          pendingCleanupPersisted: false,
+          orphanedAssetsPossible: false,
+          failedStores: [],
+          error: null
+        });
+      }
+
+      bumpBookGeneration(bookId);
+      deletedBookIdsInSession.add(bookId);
+
+      const existingBookRec = await dbGet("books", bookId).catch(() => null);
+      const capturedInstanceId = (
+        (existingBookRec && typeof existingBookRec.bookInstanceId === "string" && existingBookRec.bookInstanceId) ||
+        bookInstanceIdByBook.get(bookId) ||
+        null
+      );
+
+      const contentRec = await dbGet("bookContents", bookId);
+      const contentKeysToDelete = [bookId];
+      if (contentRec && contentRec.chunkCount > 0) {
+        for (let c = 0; c < contentRec.chunkCount; c++) {
+          contentKeysToDelete.push(`${bookId}__chunk_${c}`);
+        }
+      }
+      const settingsKeysToDelete = [`bookSearchHistory_${bookId}`];
+      const assetKeys = await dbGetAllKeys("bookAssets");
+      const matchingAssetKeys = assetKeys.filter(key => String(key).startsWith(`${bookId}::`));
+
+      if (isCommitHoldActive()) {
+        deletedBookIdsInSession.delete(bookId);
+        return buildCommitBlockedResult({
+          deletedBook: false,
+          deletedFromIdb: false,
+          deletedFromMemoryOnly: false,
+          partial: false,
+          pendingCleanupPersisted: false,
+          orphanedAssetsPossible: false,
+          failedStores: [],
+          error: null
+        });
+      }
+
+      // Fase 1: Borrado autoritativo del registro canónico "books"
+      const bookDel = await dbDelete("books", bookId);
+      if (!bookDel.ok) {
+        deletedBookIdsInSession.delete(bookId);
+        if (bookDel.blockedByCommitHold) {
+          return buildCommitBlockedResult({
+            deletedBook: false,
+            deletedFromIdb: false,
+            deletedFromMemoryOnly: false,
+            partial: false,
+            pendingCleanupPersisted: false,
+            orphanedAssetsPossible: false,
+            failedStores: [],
+            error: null
+          });
+        }
+        return {
+          ok: false,
+          persistedToIdb: false,
+          persistedToMemory: false,
+          deletedBook: false,
+          deletedFromIdb: false,
+          deletedFromMemoryOnly: false,
+          partial: false,
+          pendingCleanupPersisted: false,
+          orphanedAssetsPossible: false,
+          failedStores: ["books"],
+          error: bookDel.error || new Error("Failed deleting book record from IndexedDB")
+        };
+      }
 
     // Camino solo RAM (p. ej. !conn / IDB bloqueado): nunca informar borrado confirmado en disco ni borrar espejo
     if (!bookDel.persistedToIdb && bookDel.persistedToMemory) {
@@ -2935,19 +3413,20 @@
     const cleanupPersistRes = await persistPendingAssetCleanupsMap(mergedCleanups);
     const pendingCleanupPersisted = Boolean(cleanupPersistRes.ok && cleanupPersistRes.persistedToIdb === true);
 
-    return {
-      ok: false,
-      persistedToIdb: false,
-      persistedToMemory: false,
-      deletedBook: true,
-      deletedFromIdb: true,
-      deletedFromMemoryOnly: false,
-      partial: true,
-      pendingCleanupPersisted,
-      orphanedAssetsPossible: !pendingCleanupPersisted,
-      failedStores,
-      error: firstError || cleanupPersistRes.error || null
-    };
+      return {
+        ok: false,
+        persistedToIdb: false,
+        persistedToMemory: false,
+        deletedBook: true,
+        deletedFromIdb: true,
+        deletedFromMemoryOnly: false,
+        partial: true,
+        pendingCleanupPersisted,
+        orphanedAssetsPossible: !pendingCleanupPersisted,
+        failedStores,
+        error: firstError || cleanupPersistRes.error || null
+      };
+    }, { bulk: true });
   }
 
   // Domain repositories over existing IndexedDB stores
@@ -3054,6 +3533,17 @@
     themes: themesRepo,
     fonts: fontsRepo,
     swatches: swatchesRepo,
-    dict: dictRepo
+    dict: dictRepo,
+    lifecycle: {
+      getMutationEpoch,
+      bumpMutationEpoch,
+      getPendingWorkSummary,
+      isQuiescent,
+      waitForQuiescence,
+      enterCommitHold,
+      releaseCommitHold,
+      isCommitHoldActive,
+      getCommitHoldState
+    }
   };
 })(window);
