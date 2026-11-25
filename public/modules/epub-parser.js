@@ -411,6 +411,13 @@
     let totalExtractedAssetBytes = 0;
     const pendingAssets = [];
     let pendingAssetBytes = 0;
+    const omittedImages = {
+      total: 0,
+      singleLimit: 0,
+      totalLimit: 0,
+      inlineLimit: 0
+    };
+    const rejectedAssets = new Map();
 
     const flushPendingAssets = async () => {
       if (pendingAssets.length === 0) return;
@@ -471,6 +478,8 @@
           if (src.startsWith("data:")) {
             // Evitar que imágenes Base64 gigantes incrustadas en el HTML desborden la memoria del capítulo
             if (src.length > LIMITS.MAX_INLINE_DATA_URL_LEN) {
+              omittedImages.inlineLimit++;
+              omittedImages.total++;
               img.remove();
             }
             continue;
@@ -497,6 +506,14 @@
             img.removeAttribute("xlink:href");
             continue;
           }
+          if (rejectedAssets.has(assetKey)) {
+            const reason = rejectedAssets.get(assetKey);
+            if (reason === "single") omittedImages.singleLimit++;
+            else if (reason === "total") omittedImages.totalLimit++;
+            omittedImages.total++;
+            img.remove();
+            continue;
+          }
 
           const imgZip = findZipEntry(zip, resolvedPath);
           if (imgZip) {
@@ -508,8 +525,13 @@
                 coverDataUrl = await compressCoverToDataUrl(rawBytes, inferImageMimeType(resolvedPath));
               }
 
+              let rejectionReason = null;
               if (needAsset && rawBytes) {
-                if (rawBytes.byteLength <= LIMITS.MAX_SINGLE_ASSET_BYTES && (totalExtractedAssetBytes + rawBytes.byteLength) <= LIMITS.MAX_TOTAL_ASSETS_BYTES) {
+                if (rawBytes.byteLength > LIMITS.MAX_SINGLE_ASSET_BYTES) {
+                  rejectionReason = "single";
+                } else if ((totalExtractedAssetBytes + rawBytes.byteLength) > LIMITS.MAX_TOTAL_ASSETS_BYTES) {
+                  rejectionReason = "total";
+                } else {
                   pendingAssets.push({
                     assetKey,
                     bookId,
@@ -523,6 +545,8 @@
                     await flushPendingAssets();
                   }
                 }
+              } else if (!needAsset) {
+                rejectionReason = "total";
               }
               delete zip.files[imgZip.name];
               if (seenAssets.has(assetKey)) {
@@ -531,6 +555,12 @@
                 img.removeAttribute("href");
                 img.removeAttribute("xlink:href");
               } else {
+                if (rejectionReason) {
+                  rejectedAssets.set(assetKey, rejectionReason);
+                  if (rejectionReason === "single") omittedImages.singleLimit++;
+                  else if (rejectionReason === "total") omittedImages.totalLimit++;
+                  omittedImages.total++;
+                }
                 img.remove();
               }
             } catch (e) {}
@@ -593,7 +623,7 @@
       footnotes: footnoteCollector.footnotesMap
     };
 
-    return { bookRecord, assetBlobs: [] };
+    return { bookRecord, assetBlobs: [], omittedImages };
   }
 
   globalScope.NyxenEpub = {

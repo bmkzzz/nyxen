@@ -3166,7 +3166,7 @@ https://github.com/nodeca/pako/blob/main/LICENSE
     <input type="file" id="singleEpubInput" accept=".epub,application/epub+zip,application/zip,application/octet-stream" multiple="" class="hidden">
     <input type="file" id="customFontInput" accept=".ttf,.otf,.woff,.woff2,font/ttf,font/otf,font/woff,font/woff2,application/octet-stream" class="hidden">
     <input type="file" id="replaceCoverInput" accept="image/*" class="hidden">
-    <input type="file" id="backupJsonInput" accept=".json,.zip,application/zip,application/x-zip-compressed,application/json,text/plain" class="hidden">
+    <input type="file" id="backupJsonInput" accept=".json,application/json,text/plain" class="hidden">
 
     <!-- ========================================== -->
     <!-- 1. VISTA: BIBLIOTECA (WATTPAD UI)          -->
@@ -7874,6 +7874,7 @@ https://github.com/nodeca/pako/blob/main/LICENSE
       overlay?.classList.remove("hidden");
       let importedCount = 0;
       let failedCount = 0;
+      let omittedImagesTotal = 0;
 
       try {
         for (let idx = 0; idx < files.length; idx++) {
@@ -7885,7 +7886,7 @@ https://github.com/nodeca/pako/blob/main/LICENSE
           }
           await new Promise(r => setTimeout(r, 25));
           try {
-            const { bookRecord, assetBlobs } = await parseLocalEpub(file);
+            const { bookRecord, assetBlobs, omittedImages } = await parseLocalEpub(file);
             bookRecord.hasStartedReading = false;
             bookRecord.currentChapter = 0;
             bookRecord.chapterScrollRatio = 0;
@@ -7895,6 +7896,11 @@ https://github.com/nodeca/pako/blob/main/LICENSE
             if (Array.isArray(assetBlobs)) assetBlobs.length = 0;
             if (savedOk) {
               importedCount++;
+              const omittedCount = omittedImages && typeof omittedImages.total === "number" ? omittedImages.total : 0;
+              if (omittedCount > 0) {
+                omittedImagesTotal += omittedCount;
+                console.warn(`EPUB "${file.name}": ${omittedCount} imagen(es) omitida(s) por superar los límites.`, omittedImages);
+              }
             } else {
               failedCount++;
               console.error("No se pudo guardar el libro en IndexedDB:", file.name);
@@ -7910,17 +7916,41 @@ https://github.com/nodeca/pako/blob/main/LICENSE
         await showView("library");
 
         if (importedCount > 0 && failedCount === 0) {
-          showToast(
-            importedCount === 1
-              ? (currentLang === "es" ? "Libro añadido a la biblioteca" : "Book added to library")
-              : (currentLang === "es" ? `${importedCount} libros añadidos a la biblioteca` : `${importedCount} books added to library`)
-          );
+          if (omittedImagesTotal > 0) {
+            const warnMsg = importedCount === 1
+              ? (currentLang === "es"
+                ? (omittedImagesTotal === 1
+                  ? "Libro añadido (1 imagen omitida por límite)"
+                  : `Libro añadido (${omittedImagesTotal} imágenes omitidas por límite)`)
+                : (omittedImagesTotal === 1
+                  ? "Book added (1 image skipped due to limit)"
+                  : `Book added (${omittedImagesTotal} images skipped due to limit)`))
+              : (currentLang === "es"
+                ? `${importedCount} libros añadidos (${omittedImagesTotal} img. omitidas por límite)`
+                : `${importedCount} books added (${omittedImagesTotal} images skipped)`);
+            showToast(warnMsg, 4200);
+          } else {
+            showToast(
+              importedCount === 1
+                ? (currentLang === "es" ? "Libro añadido a la biblioteca" : "Book added to library")
+                : (currentLang === "es" ? `${importedCount} libros añadidos a la biblioteca` : `${importedCount} books added to library`)
+            );
+          }
         } else if (importedCount > 0 && failedCount > 0) {
-          showToast(
-            currentLang === "es"
-              ? `${importedCount} añadidos, ${failedCount} fallaron al guardar`
-              : `${importedCount} added, ${failedCount} failed to save`
-          );
+          if (omittedImagesTotal > 0) {
+            showToast(
+              currentLang === "es"
+                ? `${importedCount} añadidos, ${failedCount} fallaron (${omittedImagesTotal} img. omitidas)`
+                : `${importedCount} added, ${failedCount} failed (${omittedImagesTotal} images skipped)`,
+              4200
+            );
+          } else {
+            showToast(
+              currentLang === "es"
+                ? `${importedCount} añadidos, ${failedCount} fallaron al guardar`
+                : `${importedCount} added, ${failedCount} failed to save`
+            );
+          }
         } else {
           showToast(currentLang === "es" ? "No se pudo guardar o procesar el archivo EPUB." : "Could not save or parse EPUB file.");
         }
