@@ -6583,12 +6583,15 @@ https://github.com/nodeca/pako/blob/main/LICENSE
     ];
 
     let readerControlsVisible = true;
+    let currentNavView = "library";
 
     /* -------------------------------------------------------------
        6. RUTAS Y CAMBIO DE VISTAS
     ------------------------------------------------------------- */
     async function showView(viewName, readerOptions = {}) {
       if (isSwCommitLocked()) return;
+      currentNavView = viewName === "reader" ? "reader" : (viewName === "detail" ? "detail" : "library");
+      if (typeof syncLocalNavState === "function") syncLocalNavState();
       if (viewName !== "reader" && !document.getElementById("viewReader")?.classList.contains("hidden")) {
         flushPendingReaderProgress();
         if (typeof cancelReaderLayoutStabilization === "function") {
@@ -19001,6 +19004,7 @@ https://github.com/nodeca/pako/blob/main/LICENSE
           lockState: swUpdateState
         });
         scheduleSafeWindowEvaluation();
+        syncLocalNavState(true);
       } catch (err) {
         console.error("Error crítico inicializando Nyxen:", err);
         updateTempStorageWarningBanner();
@@ -19013,8 +19017,359 @@ https://github.com/nodeca/pako/blob/main/LICENSE
         } catch (fallbackErr) {
           document.getElementById("viewLibrary")?.classList.remove("hidden");
         }
+        syncLocalNavState(true);
       }
     }
+
+    /* -------------------------------------------------------------
+       18. COORDINACIÓN BOTÓN ATRÁS (ANDROID / PWA / STANDALONE)
+    ------------------------------------------------------------- */
+    const NAV_OBSERVED_ELEMENT_IDS = [
+      "viewLibrary", "viewStoryDetail", "viewReader",
+      "proColorPickerModal", "themeActionMenuModal", "externalLinkModal",
+      "quoteCardModal", "qcPanelThemeSub", "qcPanelFontSub", "qcHighlightHelpPopover",
+      "noteModal", "dictionaryOverlay", "themeEditorModal",
+      "clearConfirmModal", "deleteSingleBookModal", "groupBookModal",
+      "editMetadataModal", "uiSettingsModal", "aboutModal",
+      "bookContextMenuModal", "ctxStatusDropdownMenu",
+      "libViewMenuPopover", "readestMenuPopover",
+      "foliateDrawer", "drawerSearchFullView", "annotationsExportPopover", "annotationsFilterPopover",
+      "panelTypography", "aaPanelAdvancedView", "aaPanelMarginsView", "readerFontButtonsList",
+      "footnotePopup", "existingHighlightPopup"
+    ];
+
+    let lastReportedNavDepth = -1;
+    let standalonePendingPopSync = false;
+    let standalonePendingPopTimer = null;
+
+    function isNavElementVisible(id) {
+      const el = document.getElementById(id);
+      return Boolean(el && !el.classList.contains("hidden"));
+    }
+
+    function getLocalNavDepth() {
+      let depth = 0;
+      const inSubView =
+        currentNavView === "reader" ||
+        currentNavView === "detail" ||
+        isNavElementVisible("viewReader") ||
+        isNavElementVisible("viewStoryDetail");
+      if (inSubView) depth += 1;
+
+      if (isNavElementVisible("proColorPickerModal")) depth += 1;
+      if (isNavElementVisible("themeActionMenuModal")) depth += 1;
+      if (isNavElementVisible("externalLinkModal")) depth += 1;
+      if (isNavElementVisible("quoteCardModal")) {
+        depth += 1;
+        if (isNavElementVisible("qcPanelThemeSub") || isNavElementVisible("qcPanelFontSub")) depth += 1;
+        if (isNavElementVisible("qcHighlightHelpPopover")) depth += 1;
+      }
+      if (isNavElementVisible("noteModal")) depth += 1;
+      if (isNavElementVisible("dictionaryOverlay")) depth += 1;
+      if (isNavElementVisible("themeEditorModal")) depth += 1;
+      if (isNavElementVisible("clearConfirmModal")) depth += 1;
+      if (isNavElementVisible("deleteSingleBookModal")) depth += 1;
+      if (isNavElementVisible("groupBookModal")) depth += 1;
+      if (isNavElementVisible("editMetadataModal")) depth += 1;
+      if (isNavElementVisible("uiSettingsModal")) depth += 1;
+      if (isNavElementVisible("aboutModal")) depth += 1;
+      if (isNavElementVisible("bookContextMenuModal")) {
+        depth += 1;
+        if (isNavElementVisible("ctxStatusDropdownMenu")) depth += 1;
+      }
+      if (isNavElementVisible("libViewMenuPopover")) depth += 1;
+      if (isNavElementVisible("readestMenuPopover")) depth += 1;
+      if (isNavElementVisible("foliateDrawer")) {
+        depth += 1;
+        if (isNavElementVisible("drawerSearchFullView")) depth += 1;
+        if (isNavElementVisible("annotationsExportPopover")) depth += 1;
+        if (isNavElementVisible("annotationsFilterPopover")) depth += 1;
+      }
+      if (isNavElementVisible("panelTypography")) {
+        depth += 1;
+        if (isNavElementVisible("aaPanelMarginsView")) depth += 2;
+        else if (isNavElementVisible("aaPanelAdvancedView")) depth += 1;
+        if (isNavElementVisible("readerFontButtonsList")) depth += 1;
+      }
+      if (isNavElementVisible("viewReader")) {
+        if (isNavElementVisible("footnotePopup")) depth += 1;
+        if (isNavElementVisible("existingHighlightPopup")) depth += 1;
+      }
+      return depth;
+    }
+
+    function handleAppBackAction() {
+      if (isSwCommitLocked()) return false;
+
+      if (isNavElementVisible("proColorPickerModal")) {
+        document.getElementById("proColorPickerModal")?.classList.add("hidden");
+        return true;
+      }
+      if (isNavElementVisible("themeActionMenuModal")) {
+        if (typeof closeThemeActionMenu === "function") closeThemeActionMenu();
+        else document.getElementById("themeActionMenuModal")?.classList.add("hidden");
+        return true;
+      }
+      if (isNavElementVisible("externalLinkModal")) {
+        document.getElementById("externalLinkModal")?.classList.add("hidden");
+        return true;
+      }
+      if (isNavElementVisible("quoteCardModal")) {
+        if (isNavElementVisible("qcHighlightHelpPopover")) {
+          if (typeof closeQuoteCardHighlightHelp === "function") closeQuoteCardHighlightHelp();
+          else document.getElementById("qcHighlightHelpPopover")?.classList.add("hidden");
+          return true;
+        }
+        if (isNavElementVisible("qcPanelThemeSub") || isNavElementVisible("qcPanelFontSub")) {
+          if (typeof activeQuoteCardState === "object" && activeQuoteCardState) {
+            activeQuoteCardState.subView = null;
+          }
+          if (typeof syncQuoteCardControlsUI === "function") syncQuoteCardControlsUI();
+          return true;
+        }
+        if (typeof closeQuoteCardHighlightHelp === "function") closeQuoteCardHighlightHelp();
+        document.getElementById("quoteCardModal")?.classList.add("hidden");
+        return true;
+      }
+      if (isNavElementVisible("noteModal")) {
+        document.getElementById("noteModal")?.classList.add("hidden");
+        activeClickedHighlightId = null;
+        return true;
+      }
+      if (isNavElementVisible("dictionaryOverlay")) {
+        if (typeof closeDictionaryOverlay === "function") closeDictionaryOverlay();
+        else document.getElementById("dictionaryOverlay")?.classList.add("hidden");
+        return true;
+      }
+      if (isNavElementVisible("themeEditorModal")) {
+        document.getElementById("themeEditorModal")?.classList.add("hidden");
+        return true;
+      }
+      if (isNavElementVisible("clearConfirmModal")) {
+        document.getElementById("clearConfirmModal")?.classList.add("hidden");
+        return true;
+      }
+      if (isNavElementVisible("deleteSingleBookModal")) {
+        document.getElementById("deleteSingleBookModal")?.classList.add("hidden");
+        return true;
+      }
+      if (isNavElementVisible("groupBookModal")) {
+        if (typeof closeGroupModal === "function") closeGroupModal();
+        else document.getElementById("groupBookModal")?.classList.add("hidden");
+        return true;
+      }
+      if (isNavElementVisible("editMetadataModal")) {
+        document.getElementById("editMetadataModal")?.classList.add("hidden");
+        return true;
+      }
+      if (isNavElementVisible("uiSettingsModal")) {
+        document.getElementById("uiSettingsModal")?.classList.add("hidden");
+        return true;
+      }
+      if (isNavElementVisible("aboutModal")) {
+        document.getElementById("aboutModal")?.classList.add("hidden");
+        return true;
+      }
+      if (isNavElementVisible("bookContextMenuModal")) {
+        if (isNavElementVisible("ctxStatusDropdownMenu")) {
+          document.getElementById("ctxStatusDropdownMenu")?.classList.add("hidden");
+          document.getElementById("btnCtxStatusDropdown")?.setAttribute("aria-expanded", "false");
+          const chev = document.getElementById("ctxStatusPillChevron");
+          if (chev) chev.style.transform = "";
+          return true;
+        }
+        if (typeof closeBookContextMenu === "function") closeBookContextMenu();
+        else document.getElementById("bookContextMenuModal")?.classList.add("hidden");
+        return true;
+      }
+      if (isNavElementVisible("libViewMenuPopover")) {
+        if (typeof toggleLibViewMenu === "function") toggleLibViewMenu(false);
+        else {
+          document.getElementById("libViewMenuOverlay")?.classList.add("hidden");
+          document.getElementById("libViewMenuPopover")?.classList.add("hidden");
+        }
+        return true;
+      }
+      if (isNavElementVisible("readestMenuPopover")) {
+        if (typeof toggleReadestMenu === "function") toggleReadestMenu(false);
+        else {
+          document.getElementById("readestMenuOverlay")?.classList.add("hidden");
+          document.getElementById("readestMenuPopover")?.classList.add("hidden");
+        }
+        return true;
+      }
+      if (isNavElementVisible("foliateDrawer")) {
+        if (isNavElementVisible("annotationsExportPopover")) {
+          document.getElementById("annotationsExportPopover")?.classList.add("hidden");
+          return true;
+        }
+        if (isNavElementVisible("annotationsFilterPopover")) {
+          document.getElementById("annotationsFilterPopover")?.classList.add("hidden");
+          return true;
+        }
+        if (isNavElementVisible("drawerSearchFullView")) {
+          drawerSearchSeq++;
+          clearTimeout(drawerSearchDebounce);
+          clearTimeout(drawerSearchSettleTimer);
+          document.getElementById("drawerSearchFullView")?.classList.add("hidden");
+          document.getElementById("drawerMainContainer")?.classList.remove("hidden");
+          return true;
+        }
+        if (typeof drawerSearchSeq !== "undefined" && activeSearchRenderState && !activeSearchRenderState.isComplete) {
+          drawerSearchSeq++;
+        }
+        document.getElementById("foliateDrawer")?.classList.add("hidden");
+        return true;
+      }
+      if (isNavElementVisible("panelTypography")) {
+        if (isNavElementVisible("readerFontButtonsList")) {
+          document.getElementById("readerFontButtonsList")?.classList.add("hidden");
+          document.getElementById("iconChevronReaderFont")?.classList.remove("rotate-180");
+          return true;
+        }
+        if (isNavElementVisible("aaPanelMarginsView")) {
+          if (typeof switchAaPanelView === "function") switchAaPanelView("advanced");
+          return true;
+        }
+        if (isNavElementVisible("aaPanelAdvancedView")) {
+          if (typeof switchAaPanelView === "function") switchAaPanelView("main");
+          return true;
+        }
+        if (typeof closeAaPanel === "function") closeAaPanel();
+        else document.getElementById("panelTypography")?.classList.add("hidden");
+        return true;
+      }
+      if (isNavElementVisible("viewReader")) {
+        if (isNavElementVisible("footnotePopup")) {
+          document.getElementById("footnotePopup")?.classList.add("hidden");
+          return true;
+        }
+        if (isNavElementVisible("existingHighlightPopup")) {
+          document.getElementById("existingHighlightPopup")?.classList.add("hidden");
+          activeClickedHighlightId = null;
+          return true;
+        }
+        showView("library");
+        return true;
+      }
+      if (isNavElementVisible("viewStoryDetail") || currentNavView === "detail") {
+        showView("library");
+        return true;
+      }
+      return false;
+    }
+
+    function getStandaloneHistoryDepth(state) {
+      if (state && typeof state === "object" && state.__nyxenNav === true) {
+        const d = Number(state.depth);
+        return Number.isFinite(d) && d > 0 ? Math.floor(d) : 0;
+      }
+      return 0;
+    }
+
+    function syncStandaloneHistory(desiredDepth) {
+      if (standalonePendingPopSync) return;
+      const currentDepth = getStandaloneHistoryDepth(window.history.state);
+      if (desiredDepth === currentDepth) return;
+
+      if (desiredDepth > currentDepth) {
+        for (let d = currentDepth + 1; d <= desiredDepth; d++) {
+          try {
+            window.history.pushState({ __nyxenNav: true, depth: d }, "");
+          } catch (e) {
+            break;
+          }
+        }
+        return;
+      }
+
+      const delta = currentDepth - desiredDepth;
+      standalonePendingPopSync = true;
+      clearTimeout(standalonePendingPopTimer);
+      standalonePendingPopTimer = setTimeout(() => {
+        standalonePendingPopSync = false;
+        standalonePendingPopTimer = null;
+        syncLocalNavState(true);
+      }, 400);
+
+      try {
+        window.history.go(-delta);
+      } catch (e) {
+        clearTimeout(standalonePendingPopTimer);
+        standalonePendingPopSync = false;
+        standalonePendingPopTimer = null;
+      }
+    }
+
+    function syncLocalNavState(force = false) {
+      const depth = getLocalNavDepth();
+      const isEmbedded = Boolean(
+        window.parent &&
+        window.parent !== window &&
+        window.location.origin &&
+        window.location.origin !== "null"
+      );
+
+      if (isEmbedded) {
+        if (!force && depth === lastReportedNavDepth) return;
+        lastReportedNavDepth = depth;
+        try {
+          window.parent.postMessage({ type: "NYXEN_NAV_DEPTH", depth }, window.location.origin);
+        } catch (e) {}
+      } else {
+        if (!force && depth === lastReportedNavDepth && depth === getStandaloneHistoryDepth(window.history.state)) {
+          return;
+        }
+        lastReportedNavDepth = depth;
+        syncStandaloneHistory(depth);
+      }
+    }
+
+    (function initBackNavigationBridge() {
+      const isEmbedded = Boolean(
+        window.parent &&
+        window.parent !== window &&
+        window.location.origin &&
+        window.location.origin !== "null"
+      );
+
+      if (typeof MutationObserver === "function") {
+        const observer = new MutationObserver(() => {
+          syncLocalNavState();
+        });
+        for (let i = 0; i < NAV_OBSERVED_ELEMENT_IDS.length; i++) {
+          const el = document.getElementById(NAV_OBSERVED_ELEMENT_IDS[i]);
+          if (el) {
+            observer.observe(el, { attributes: true, attributeFilter: ["class"] });
+          }
+        }
+      }
+
+      if (isEmbedded) {
+        window.addEventListener("message", (event) => {
+          if (event.origin !== window.location.origin || event.source !== window.parent) return;
+          const data = event.data;
+          if (!data || typeof data !== "object" || data.type !== "NYXEN_NAV_BACK") return;
+          handleAppBackAction();
+          syncLocalNavState(true);
+        });
+      } else {
+        if (getStandaloneHistoryDepth(window.history.state) > 0) {
+          try { window.history.replaceState(null, ""); } catch (e) {}
+        }
+        window.addEventListener("popstate", () => {
+          if (standalonePendingPopSync) {
+            clearTimeout(standalonePendingPopTimer);
+            standalonePendingPopSync = false;
+            standalonePendingPopTimer = null;
+            syncLocalNavState(true);
+            return;
+          }
+          handleAppBackAction();
+          syncLocalNavState(true);
+        });
+      }
+    })();
 
     window.addEventListener("DOMContentLoaded", () => {
       init();
